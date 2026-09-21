@@ -41,7 +41,7 @@ export const LiveDemo: React.FC = () => {
             }
         } catch (err) {
             console.error(err);
-            setError('Error connecting to LinkLens API.');
+            setError('Error connecting to Legible Links API.');
         } finally {
             setLoading(false);
         }

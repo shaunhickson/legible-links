@@ -5,8 +5,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "LinkLens | Transparency for the Web",
-  description: "Stop clicking and hoping. LinkLens reveals what's behind opaque URLs instantly.",
+  title: "Legible Links | Transparency for the Web",
+  description: "Stop clicking and hoping. Legible Links reveals what's behind opaque URLs instantly.",
 };
 
 export default function RootLayout({

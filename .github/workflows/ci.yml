@@ -26,9 +26,6 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Debug File System
-        run: ls -R backend
-
       - name: Tidy
         run: cd backend && go mod tidy
 
@@ -143,5 +140,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: youtube-url-replacer-extension
+          name: legible-links-extension
           path: extension/dist

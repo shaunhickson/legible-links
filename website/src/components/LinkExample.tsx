@@ -22,7 +22,7 @@ export const LinkExample: React.FC<LinkExampleProps> = ({ before, after, platfor
             </div>
 
             <div className="flex-1 w-full">
-                <p className="text-xs font-semibold text-blue-500 uppercase mb-2">After LinkLens</p>
+                <p className="text-xs font-semibold text-blue-500 uppercase mb-2">After Legible Links</p>
                 <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800/50 flex items-center gap-2 text-slate-900 dark:text-slate-100 font-medium">
                     <span className="text-blue-600 dark:text-blue-400">{platformIcon}</span>
                     {after}

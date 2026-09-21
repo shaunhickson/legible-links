@@ -8,7 +8,7 @@ export default function PrivacyPolicy() {
       <header className="max-w-4xl mx-auto px-6 py-8 flex items-center gap-2 font-bold text-2xl text-slate-900 dark:text-white">
         <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
           <Eye className="text-blue-600" size={32} />
-          LinkLens
+          Legible Links
         </Link>
       </header>
 
@@ -24,14 +24,14 @@ export default function PrivacyPolicy() {
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">1. Our Philosophy</h2>
               <p>
-                LinkLens is built on a foundation of trust. Our goal is to make the web more transparent without compromising your privacy. We process URLs to resolve their titles, but we do not track you, we do not log your browsing history, and we do not sell your data.
+                Legible Links is built on a foundation of trust. Our goal is to make the web more transparent without compromising your privacy. We process URLs to resolve their titles, but we do not track you, we do not log your browsing history, and we do not sell your data.
               </p>
             </section>
 
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">2. Data Collection</h2>
               <p className="mb-4">
-                The LinkLens browser extension only interacts with URLs that you encounter. When a supported opaque URL is found:
+                The Legible Links browser extension only interacts with URLs that you encounter. When a supported opaque URL is found:
               </p>
               <ul className="list-disc pl-6 space-y-2">
                 <li>The &quot;raw&quot; URL is sent to our backend resolution service.</li>
@@ -57,7 +57,7 @@ export default function PrivacyPolicy() {
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">5. Contact Us</h2>
               <p>
-                If you have questions about this Privacy Policy, please contact us at <a href="mailto:support@linklens.app" className="text-blue-600 hover:underline">support@linklens.app</a>.
+                If you have questions about this Privacy Policy, please <a href="https://github.com/shaunhickson/legible-links/issues" className="text-blue-600 hover:underline">open an issue on GitHub</a>.
               </p>
             </section>
           </div>
