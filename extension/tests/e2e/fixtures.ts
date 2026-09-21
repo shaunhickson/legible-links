@@ -5,6 +5,13 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/** Fixtures are served by tests/e2e/server.mjs (started by playwright.config.ts webServer). */
+export const FIXTURE_BASE = 'http://127.0.0.1:4173';
+
+export function fixtureUrl(file: string): string {
+  return `${FIXTURE_BASE}/${file}`;
+}
+
 export const test = base.extend<{
   context: BrowserContext;
   extensionId: string;

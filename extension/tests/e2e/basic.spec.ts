@@ -1,32 +1,36 @@
-import { test, expect } from './fixtures';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { test, expect, fixtureUrl } from './fixtures';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const VIDEO_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+const TITLE = 'Rick Astley - Never Gonna Give You Up (Official Music Video)';
 
-test('LinkLens injects tooltip and modifies link text', async ({ page }) => {
-  // 1. Mock the backend API call to ensure fast, deterministic tests without hitting network
-  await page.route('**/resolve?url=*', async (route) => {
-    const json = {
-      title: "Rick Astley - Never Gonna Give You Up (Official Music Video)",
-      originalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      platform: "YouTube"
-    };
-    await route.fulfill({ json });
+test('Legible Links rewrites a raw-URL link and keeps the href', async ({ page }) => {
+  // 1. Mock the backend so the test is fast, deterministic and never touches production.
+  const requestedUrls: string[][] = [];
+  await page.route('**/resolve*', async (route) => {
+    const body = route.request().postDataJSON() as { urls?: string[] } | null;
+    const urls = body?.urls ?? [];
+    requestedUrls.push(urls);
+    const titles: Record<string, string> = {};
+    const details: Record<string, { platform: string }> = {};
+    for (const url of urls) {
+      titles[url] = TITLE;
+      details[url] = { platform: 'YouTube' };
+    }
+    await route.fulfill({ json: { titles, details } });
   });
 
-  // 2. Navigate to our local test fixture
-  const testHtmlPath = path.join(__dirname, 'test.html');
-  await page.goto(`file://${testHtmlPath}`);
+  // 2. Open the fixture over HTTP (the content script does not match file://).
+  await page.goto(fixtureUrl('test.html'));
 
-  // 3. The original link should be modified by LinkLens
-  const link = page.locator('a[href="https://www.youtube.com/watch?v=dQw4w9WgXcQ"]');
-  
-  // Wait for the link text to change to the mocked title
+  // 3. The link text becomes the mocked title plus the hostname; the href is untouched.
+  const link = page.locator(`a[href="${VIDEO_URL}"]`);
   await expect(link).toContainText('Rick Astley - Never Gonna Give You Up');
+  await expect(link).toContainText('www.youtube.com');
+  await expect(link).toHaveAttribute('href', VIDEO_URL);
+  await expect(link).toHaveAttribute('title', VIDEO_URL);
+  await expect(link).toHaveClass(/ll-resolved/);
+  await expect(link.locator('svg.ll-icon')).toHaveCount(1);
 
-  // 4. Verify LinkLens specific DOM elements are injected (e.g. icon or custom classes)
-  // Check if the custom data attribute or shadow dom is added.
-  // We'll just verify the text changed as a basic smoke test for now.
+  // 4. Exactly the raw URL on the page was sent, as a batch POST.
+  expect(requestedUrls.flat()).toEqual([VIDEO_URL]);
 });

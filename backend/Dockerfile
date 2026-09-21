@@ -1,5 +1,5 @@
 # Use the official Golang image to create a build artifact.
-FROM golang:1.24 as builder
+FROM golang:1.24 AS builder
 
 # Create and change to the app directory.
 WORKDIR /app
@@ -30,7 +30,7 @@ COPY --from=builder /app/server /server
 
 # Service must listen to $PORT environment variable.
 # This default value facilitates local development.
-ENV PORT 8080
+ENV PORT=8080
 
 # Run the web service on container startup.
 USER nonroot:nonroot

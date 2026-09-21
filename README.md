@@ -1,80 +1,76 @@
-# LinkLens
+# Legible Links
 
-**Make the web transparent by default.**
+**See where a link goes before you click it.**
 
-LinkLens is a browser extension and backend service that automatically replaces opaque URLs (like raw YouTube links or shortened `bit.ly` links) with their human-readable titles. Stop "clicking and hoping" and start browsing with context.
+Legible Links is a browser extension that finds links whose visible text is just a raw URL, such as `https://youtu.be/dQw4w9WgXcQ` or `https://bit.ly/3abc`, and rewrites them as a readable title with the destination always shown:
 
-## Features
+> ▶ Rick Astley - Never Gonna Give You Up (Official Video) · youtube.com
 
-- **Universal Link Resolution:** Automatically detects raw URLs in web pages and fetches their titles using OpenGraph metadata.
-- **YouTube Specialization:** Dedicated support for YouTube links (watch, shorts, live, mobile) using the official YouTube API.
-- **Privacy Focused:** Only sends "raw" links to the backend. No user tracking, no cookies, and SSRF-protected resolution.
-- **High Performance:** Backend caching with Firestore/Redis support and low-latency Go implementation.
-- **Modular Architecture:** Easily add support for new platforms (GitHub, Jira, etc.) via a pluggable resolver system.
+The real URL is never hidden: it stays in the link's `href`, in the native tooltip, and in the rich tooltip. Links inside editors, links to private or internal hosts, and links that look like password resets, magic logins, unsubscribes, or invites are left alone and never leave your browser.
 
-## Project Structure
+**Status: pre-release (0.9.0).** Not yet on any store. Formerly "LinkLens". The current milestone plan is in [`docs/ROADMAP.md`](docs/ROADMAP.md); the full assessment and design is [`docs/PLAN_2026-09.md`](docs/PLAN_2026-09.md).
 
-- `/backend`: Go-based resolution engine.
-  - `/resolvers`: Pluggable logic for different platforms.
-  - `/transport`: Security-hardened HTTP client (SSRF protection).
-  - `/middleware`: Rate limiting and logging.
-- `/extension`: React & TypeScript browser extension (Vite-powered).
-  - `/src/content.ts`: DOM scanning and link replacement logic.
-- `/docs`: Detailed design documents and roadmaps.
+## How resolution works
 
-## Getting Started
+| Tier | Links | Where it happens | Default |
+|---|---|---|---|
+| 0 | Wikipedia, GitHub, Reddit, Stack Overflow and other URLs whose title is in the path | In the browser, no network | automatic |
+| A | YouTube, Spotify, X, Reddit, Vimeo | In the browser, via each platform's public oEmbed endpoint, cookies omitted | automatic |
+| B | Everything else, and shortened links | The backend service (shared instance or your own) | on hover |
 
-### Prerequisites
+Tiers 0 and A, hover mode, and the onboarding choice between Private, Balanced, and Everything ship in milestone M1. Until then the extension sends qualifying links to the backend automatically, with the guards above.
 
-- Go 1.22+
-- Node.js 20+
-- A YouTube Data API v3 Key (optional, for YouTube resolution)
+## Privacy and security posture
 
-### Backend Setup
+- The extension requests only `storage` plus the ability to read link text on web pages. Nothing is collected, and there is no telemetry.
+- Titles are inserted as text, never as HTML, and are stripped of control and bidi-override characters and length-capped.
+- The backend keeps no database and no API keys, logs neither URLs nor client IPs, and fetches only public hosts on ports 80 and 443 through an SSRF-hardened transport. It is rate limited per client and globally.
+- If the backend is unreachable, links simply stay as they are.
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-2. Set up environment variables:
-   ```bash
-   export YOUTUBE_API_KEY=your_key_here
-   ```
-3. Run the server:
-   ```bash
-   go run .
-   ```
+## Repository layout
 
-### Extension Setup
+- `extension/` — the browser extension (Vite, React, TypeScript). Content script in `src/content/optimizer.ts`, rendering in `src/utils/render.ts`, URL guards in `src/utils/sensitive.ts`.
+- `backend/` — the Go resolution service: `POST /resolve` (JSON `{"urls": [...]}` → `{"titles": {...}, "details": {...}}`) and `GET /health`.
+- `website/` — marketing site with the privacy policy and terms (Next.js).
+- `docs/` — plan and roadmap.
 
-1. Navigate to the extension directory:
-   ```bash
-   cd extension
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Build the extension:
-   ```bash
-   npm run build
-   ```
-4. Load the `dist` folder into your browser (Chrome/Edge/Brave) via "Load unpacked" in the Extensions settings.
+## Getting started
 
-## Development
+Prerequisites: Node 20+, Go 1.24+.
 
-The project includes a `Makefile` with common tasks:
+Backend:
+```bash
+cd backend
+go run .            # listens on :8080; no configuration or keys needed
+```
 
-- `make build-backend`: Build the Go binary.
-- `make build-extension`: Build the React extension.
-- `make test-backend`: Run all Go tests.
-- `make test-extension`: Run vitest for the extension unit/integration tests.
-- `cd extension && npm run test:e2e`: Run Playwright E2E tests for the extension (requires `npm run build` first).
+Extension:
+```bash
+cd extension
+npm install
+npm run build       # writes dist/
+```
+Load `extension/dist` as an unpacked extension (Chrome: chrome://extensions → Developer mode → Load unpacked). To use a local backend, set the API URL in the options page to `http://localhost:8080/resolve`.
+
+Useful commands (also wrapped by the `Makefile`):
+```bash
+cd extension && npm run lint && npx vitest run && npm run test:e2e
+cd backend && go vet ./... && golangci-lint run ./... && go test -race -cover ./...
+```
+
+Backend configuration is entirely optional environment variables: `PORT` (8080), `RATE_LIMIT_RPM` (60), `RATE_LIMIT_BURST` (20), `GLOBAL_RATE_LIMIT_RPS` (50), `GLOBAL_RATE_LIMIT_BURST` (100), `MAX_CONCURRENT_RESOLVES` (16), `TRUSTED_PROXY_HOPS` (0; set to 1 behind Cloud Run), `RESOLVER_TIMEOUT_MS` (2000), `MAX_ITEMS_PER_REQUEST` (50), `MAX_BODY_BYTES` (10240), `ENABLED_RESOLVERS` (all).
+
+## Self-hosting the backend
+
+```bash
+cd backend && docker build -t legible-links-backend . && docker run -p 8080:8080 legible-links-backend
+```
+Then point the extension's API URL at `https://your-host/resolve`. A published container image and a fuller guide arrive with milestone M2.
 
 ## Contributing
 
-We follow a **Design-First** workflow. Every major feature must have a design document in the `docs/` folder before implementation begins. See `docs/GITHUB_STRATEGY.md` for our collaboration guidelines.
+Read [`CLAUDE.md`](CLAUDE.md) for the hard rules (no `innerHTML`, no URL or IP logging, nothing leaves the browser without passing the sensitive-URL guard) and the process. One branch and one PR per change, with the reasoning in the description.
 
 ## License
 
-MIT
+MIT. See [`LICENSE`](LICENSE).

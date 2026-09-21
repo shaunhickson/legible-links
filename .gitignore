@@ -1,26 +1,39 @@
-# Binaries
-/backend/server
-/backend/bin/
-
-# Extension build artifacts
-/extension/dist/
-/extension/node_modules/
-
-# OS specific
-.DS_Store
-
-# IDEs
-.vscode/
-.idea/
-
-# Environment variables
+# Secrets and local config
 .env
-\n# Temporary files\nbackend.log\nextension.zip
+.env.*
+!.env.example
 
-# Gas Town (added by gt)
-.runtime/
-.claude/commands/
-.logs/
-.beads/
+# Go
+backend/server
+backend/*.log
+*.test
+*.out
+
+# Node
+node_modules/
+extension/dist/
+website/.next/
+website/out/
+*.tsbuildinfo
+npm-debug.log*
+
+# Test output
 extension/playwright-report/
 extension/test-results/
+extension/blob-report/
+coverage/
+
+# Build artifacts
+*.zip
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local agent tooling (never commit)
+.runtime/
+.claude/
+.logs/
+.beads/

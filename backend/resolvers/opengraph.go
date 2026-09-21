@@ -2,11 +2,15 @@ package resolvers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
 )
+
+// ErrNotHTML is returned when a page's Content-Type is not HTML/XHTML.
+var ErrNotHTML = errors.New("response is not an html document")
 
 type OpenGraphResolver struct {
 	client *http.Client
@@ -28,13 +32,13 @@ func (r *OpenGraphResolver) CanHandle(u *url.URL) bool {
 }
 
 func (r *OpenGraphResolver) Resolve(ctx context.Context, u *url.URL) (*Result, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set a User-Agent to avoid some basic blocks
-	req.Header.Set("User-Agent", "youtube-url-replacer/1.0 (+https://github.com/shaunhickson/youtube-url-replacer)")
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("Accept", "text/html, application/xhtml+xml;q=0.9, */*;q=0.1")
 
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -44,6 +48,10 @@ func (r *OpenGraphResolver) Resolve(ctx context.Context, u *url.URL) (*Result, e
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	if !IsHTMLContentType(resp.Header.Get("Content-Type")) {
+		return nil, ErrNotHTML
 	}
 
 	res, err := ExtractMetadata(resp.Body)

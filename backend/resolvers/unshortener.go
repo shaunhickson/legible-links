@@ -2,12 +2,17 @@ package resolvers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
+
+// ErrUnsupportedScheme is returned when a redirect chain ends somewhere other
+// than an http(s) URL.
+var ErrUnsupportedScheme = errors.New("final url has an unsupported scheme")
 
 // UnshortenerResolver follows redirect chains to find the final URL
 type UnshortenerResolver struct {
@@ -36,7 +41,7 @@ func (r *UnshortenerResolver) Name() string {
 }
 
 func (r *UnshortenerResolver) CanHandle(u *url.URL) bool {
-	host := strings.ToLower(u.Host)
+	host := strings.ToLower(u.Hostname())
 	host = strings.TrimPrefix(host, "www.")
 
 	for _, d := range r.domains {
@@ -55,15 +60,16 @@ func (r *UnshortenerResolver) Resolve(ctx context.Context, u *url.URL) (*Result,
 
 	for hops < maxHops {
 		if seen[currentURL] {
-			return nil, fmt.Errorf("redirect loop detected at %s", currentURL)
+			// Error text must not carry the URL; the host is enough for logs.
+			return nil, fmt.Errorf("redirect loop detected at host %s", u.Host)
 		}
 		seen[currentURL] = true
 
-		req, err := http.NewRequestWithContext(ctx, "HEAD", currentURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, currentURL, nil)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("User-Agent", "youtube-url-replacer/1.0 (+https://github.com/shaunhickson/youtube-url-replacer)")
+		req.Header.Set("User-Agent", UserAgent)
 
 		// We use a client that DOES NOT automatically follow redirects so we can track them
 		resp, err := r.client.Transport.RoundTrip(req)
@@ -83,6 +89,10 @@ func (r *UnshortenerResolver) Resolve(ctx context.Context, u *url.URL) (*Result,
 			if err != nil {
 				break
 			}
+			// Never follow a redirect off the web (javascript:, file:, ...).
+			if nextURL.Scheme != "http" && nextURL.Scheme != "https" {
+				return nil, ErrUnsupportedScheme
+			}
 			currentURL = nextURL.String()
 			u = nextURL // Update u for relative parsing in next hop
 			hops++
@@ -96,10 +106,11 @@ func (r *UnshortenerResolver) Resolve(ctx context.Context, u *url.URL) (*Result,
 	if err != nil {
 		return nil, err
 	}
+	if finalURL.Scheme != "http" && finalURL.Scheme != "https" {
+		return nil, ErrUnsupportedScheme
+	}
 
 	// Now that we have the final URL, let the manager resolve it properly
-	// This allows it to hit YouTube, OpenGraph, etc.
-	// We call Resolve on the manager but we must be careful of recursion
-	// The manager already has a list of resolvers.
+	// (YouTube, OpenGraph, ...), skipping ourselves to avoid recursion.
 	return r.manager.resolveRecursively(ctx, finalURL, r.Name())
 }

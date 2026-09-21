@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Must match FIXTURE_BASE in tests/e2e/fixtures.ts.
+const FIXTURE_BASE = 'http://127.0.0.1:4173';
+
 export default defineConfig({
   testDir: './tests/e2e',
   /* Maximum time one test can run for. */
@@ -17,10 +20,15 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: 'html',
+  /* Serve the fixtures over HTTP: the content script does not match file:// pages. */
+  webServer: {
+    command: 'node tests/e2e/server.mjs',
+    url: `${FIXTURE_BASE}/test.html`,
+    reuseExistingServer: true,
+  },
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
-    /* Base URL to use in actions like `await page.goto('/')`. */
-    // baseURL: 'http://127.0.0.1:3000',
+    baseURL: FIXTURE_BASE,
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',

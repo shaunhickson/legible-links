@@ -1,20 +1,38 @@
 import React, { useEffect, useState } from 'react';
 import './Popup.css'; // Reuse basic styles
-import { getSettings, saveSettings, Settings, DEFAULT_SETTINGS, FilterMode, Theme } from './utils/settings';
+import { getSettings, saveSettings, isValidApiUrl, Settings, DEFAULT_SETTINGS, FilterMode, Theme } from './utils/settings';
+
+const API_URL_ERROR = 'Enter an https:// URL (http:// is only allowed for localhost). The last valid URL stays in use.';
 
 const Options: React.FC = () => {
     const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+    const [apiUrlInput, setApiUrlInput] = useState<string>(DEFAULT_SETTINGS.apiUrl);
+    const [apiUrlError, setApiUrlError] = useState<string | null>(null);
     const [newDomain, setNewDomain] = useState('');
     const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
 
     useEffect(() => {
-        getSettings().then(setSettings);
+        getSettings().then((loaded) => {
+            setSettings(loaded);
+            setApiUrlInput(loaded.apiUrl);
+        });
     }, []);
 
     const handleSave = async (updated: Partial<Settings>) => {
         const newSettings = { ...settings, ...updated };
         await saveSettings(newSettings);
         setSettings(newSettings);
+    };
+
+    const handleApiUrlChange = (value: string) => {
+        setApiUrlInput(value);
+        const trimmed = value.trim();
+        if (isValidApiUrl(trimmed)) {
+            setApiUrlError(null);
+            handleSave({ apiUrl: trimmed });
+        } else {
+            setApiUrlError(API_URL_ERROR);
+        }
     };
 
     const addDomain = () => {
@@ -46,13 +64,15 @@ const Options: React.FC = () => {
     };
 
     const resetApiUrl = () => {
+        setApiUrlInput(DEFAULT_SETTINGS.apiUrl);
+        setApiUrlError(null);
         handleSave({ apiUrl: DEFAULT_SETTINGS.apiUrl });
     };
 
     return (
         <div className="container" style={{ width: '450px', margin: '20px auto' }}>
             <div className="header">
-                <h1>LinkLens Settings</h1>
+                <h1>Legible Links Settings</h1>
             </div>
 
             <div className="content">
@@ -60,13 +80,20 @@ const Options: React.FC = () => {
                 <div className="card" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                     <div className="label-text">Backend Connection (Self-Hosting)</div>
                     <input 
-                        type="text" 
-                        value={settings.apiUrl}
-                        onChange={(e) => handleSave({ apiUrl: e.target.value })}
-                        style={{ width: '100%', padding: '8px', marginTop: '8px', boxSizing: 'border-box' }}
+                        type="url" 
+                        value={apiUrlInput}
+                        onChange={(e) => handleApiUrlChange(e.target.value)}
+                        aria-invalid={apiUrlError !== null}
+                        aria-describedby={apiUrlError ? 'api-url-error' : undefined}
+                        style={{ width: '100%', padding: '8px', marginTop: '8px', boxSizing: 'border-box', borderColor: apiUrlError ? '#ff4444' : undefined }}
                     />
+                    {apiUrlError && (
+                        <div id="api-url-error" role="alert" style={{ color: '#ff4444', fontSize: '12px', marginTop: '6px' }}>
+                            {apiUrlError}
+                        </div>
+                    )}
                     <div style={{ marginTop: '8px', display: 'flex', gap: '8px', width: '100%' }}>
-                        <button onClick={testConnection} className="btn" disabled={testStatus === 'testing'} style={{ flex: 1, margin: 0 }}>
+                        <button onClick={testConnection} className="btn" disabled={testStatus === 'testing' || apiUrlError !== null} style={{ flex: 1, margin: 0 }}>
                             {testStatus === 'idle' && 'Test Connection'}
                             {testStatus === 'testing' && 'Testing...'}
                             {testStatus === 'success' && '✅ Success!'}

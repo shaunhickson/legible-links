@@ -10,10 +10,10 @@ export default function LandingPage() {
       <header className="max-w-6xl mx-auto px-6 py-8 flex justify-between items-center">
         <div className="flex items-center gap-2 font-bold text-2xl text-slate-900 dark:text-white">
           <Eye className="text-blue-600" size={32} />
-          LinkLens
+          Legible Links
         </div>
         <div className="flex gap-6 items-center">
-          <a href="https://github.com/shaunhickson/youtube-url-replacer" className="text-slate-600 dark:text-slate-400 hover:text-blue-600 transition-colors hidden sm:flex items-center gap-2 text-sm font-medium">
+          <a href="https://github.com/shaunhickson/legible-links" className="text-slate-600 dark:text-slate-400 hover:text-blue-600 transition-colors hidden sm:flex items-center gap-2 text-sm font-medium">
             <Github size={18} /> GitHub
           </a>
           <a href="#" className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-5 py-2 rounded-full text-sm font-bold hover:opacity-90 transition-opacity flex items-center gap-2">
@@ -29,7 +29,7 @@ export default function LandingPage() {
             Transparency for the <span className="text-blue-600">Web.</span>
           </h1>
           <p className="text-xl text-slate-600 dark:text-slate-400 mb-12 max-w-2xl mx-auto leading-relaxed">
-            Stop &quot;clicking and hoping.&quot; LinkLens reveals what&apos;s behind opaque URLs instantly, bringing clarity and safety to your browsing experience.
+            Stop &quot;clicking and hoping.&quot; Legible Links reveals what&apos;s behind opaque URLs instantly, bringing clarity and safety to your browsing experience.
           </p>
           <div className="flex flex-col sm:flex-row justify-center gap-4">
             <button className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl text-lg font-bold transition-all shadow-lg shadow-blue-500/20">
@@ -106,11 +106,11 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="max-w-6xl mx-auto px-6 py-12 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row justify-between items-center gap-8 text-slate-500 text-sm">
-        <div>© 2026 LinkLens. Built for a better web.</div>
+        <div>© 2026 Legible Links. Built for a better web.</div>
         <div className="flex gap-8">
           <a href="/privacy" className="hover:text-blue-600 transition-colors">Privacy Policy</a>
           <a href="/terms" className="hover:text-blue-600 transition-colors">Terms of Service</a>
-          <a href="https://github.com/shaunhickson/youtube-url-replacer" className="hover:text-blue-600 transition-colors flex items-center gap-1">
+          <a href="https://github.com/shaunhickson/legible-links" className="hover:text-blue-600 transition-colors flex items-center gap-1">
             <Github size={14} /> Open Source
           </a>
         </div>

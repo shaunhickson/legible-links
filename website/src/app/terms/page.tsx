@@ -8,7 +8,7 @@ export default function TermsOfService() {
       <header className="max-w-4xl mx-auto px-6 py-8 flex items-center gap-2 font-bold text-2xl text-slate-900 dark:text-white">
         <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
           <Eye className="text-blue-600" size={32} />
-          LinkLens
+          Legible Links
         </Link>
       </header>
 
@@ -24,14 +24,14 @@ export default function TermsOfService() {
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">1. Acceptance of Terms</h2>
               <p>
-                By downloading, installing, or using the LinkLens browser extension or API services, you agree to be bound by these Terms of Service.
+                By downloading, installing, or using the Legible Links browser extension or API services, you agree to be bound by these Terms of Service.
               </p>
             </section>
 
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">2. Acceptable Use</h2>
               <p className="mb-4">
-                LinkLens provides a public utility for resolving URLs. You agree not to:
+                Legible Links provides a public utility for resolving URLs. You agree not to:
               </p>
               <ul className="list-disc pl-6 space-y-2">
                 <li>Reverse engineer, decompile, or disassemble the extension or backend services.</li>
@@ -46,14 +46,14 @@ export default function TermsOfService() {
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">3. &quot;As-Is&quot; Software</h2>
               <p>
-                THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. LinkLens does not guarantee 100% uptime or that every URL will be resolved correctly.
+                THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. Legible Links does not guarantee 100% uptime or that every URL will be resolved correctly.
               </p>
             </section>
 
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">4. Limitation of Liability</h2>
               <p>
-                IN NO EVENT SHALL LINKLENS OR ITS CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+                IN NO EVENT SHALL LEGIBLE LINKS OR ITS CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               </p>
             </section>
 

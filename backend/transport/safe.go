@@ -1,3 +1,6 @@
+// Package transport provides an http.Transport hardened against SSRF: every
+// outbound connection is resolved first and refused unless all resolved
+// addresses are publicly routable and the port is 80 or 443.
 package transport
 
 import (
@@ -5,113 +8,180 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
+	"sync/atomic"
 	"time"
 )
 
 var (
-	// Private IP blocks (RFC 1918, RFC 4193, RFC 4291)
-	privateBlocks = []string{
-		"127.0.0.0/8",    // IPv4 loopback
-		"10.0.0.0/8",     // RFC1918
-		"172.16.0.0/12",  // RFC1918
-		"192.168.0.0/16", // RFC1918
-		"169.254.0.0/16", // RFC3927 link-local
-		"::1/128",        // IPv6 loopback
-		"fc00::/7",       // IPv6 unique local
-		"fe80::/10",      // IPv6 link-local
-	}
+	// ErrBlockedAddress is returned when a destination resolves to an address
+	// that is not publicly routable (loopback, private, link-local, ...).
+	ErrBlockedAddress = errors.New("blocked: destination is not a public address")
 
-	cidrs []*net.IPNet
+	// ErrBlockedPort is returned when a destination port is not 80 or 443.
+	ErrBlockedPort = errors.New("blocked: destination port is not 80 or 443")
 
-	// AllowLocalIPs should only be true during testing
-	AllowLocalIPs = false
+	// ErrNoAddresses is returned when DNS resolution yields no addresses.
+	ErrNoAddresses = errors.New("no IP addresses found")
 )
 
-func init() {
-	for _, b := range privateBlocks {
-		_, cidr, err := net.ParseCIDR(b)
-		if err != nil {
-			panic(err) // Should never happen with constant strings
-		}
-		cidrs = append(cidrs, cidr)
+// LookupFunc resolves a host name to IP addresses. net.Resolver.LookupIPAddr
+// satisfies it.
+type LookupFunc func(ctx context.Context, host string) ([]net.IPAddr, error)
+
+// allowLocalIPs disables the address and port checks. It exists only so tests
+// can talk to httptest servers on 127.0.0.1; production never sets it.
+var allowLocalIPs atomic.Bool
+
+// SetAllowLocalIPs enables or disables the SSRF checks. Tests only.
+func SetAllowLocalIPs(v bool) { allowLocalIPs.Store(v) }
+
+// AllowLocalIPs reports whether the SSRF checks are currently disabled.
+func AllowLocalIPs() bool { return allowLocalIPs.Load() }
+
+// extraBlocked lists ranges that netip's own classifiers do not cover (or that
+// we want blocked regardless of how the classifiers evolve).
+var extraBlocked = mustPrefixes(
+	"0.0.0.0/8",       // "this" network
+	"100.64.0.0/10",   // carrier-grade NAT (RFC 6598)
+	"192.0.0.0/24",    // IETF protocol assignments
+	"192.0.2.0/24",    // TEST-NET-1
+	"198.18.0.0/15",   // benchmarking (RFC 2544)
+	"198.51.100.0/24", // TEST-NET-2
+	"203.0.113.0/24",  // TEST-NET-3
+	"224.0.0.0/4",     // multicast
+	"240.0.0.0/4",     // reserved, includes 255.255.255.255
+	"64:ff9b::/96",    // NAT64 (maps to IPv4 space)
+	"2001:db8::/32",   // documentation
+	"fec0::/10",       // deprecated site-local
+	"ff00::/8",        // multicast
+	"::/128",          // unspecified
+)
+
+func mustPrefixes(cidrs ...string) []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(cidrs))
+	for _, c := range cidrs {
+		out = append(out, netip.MustParsePrefix(c))
 	}
+	return out
 }
 
-func isPrivateIP(ip net.IP) bool {
-	if AllowLocalIPs {
-		return false
-	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+// isBlockedAddr reports whether addr must never be dialed. IPv4-mapped IPv6
+// addresses are unmapped first so that ::ffff:127.0.0.1 is treated as 127.0.0.1.
+func isBlockedAddr(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if !addr.IsValid() ||
+		addr.IsUnspecified() ||
+		addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsMulticast() ||
+		addr.IsInterfaceLocalMulticast() {
 		return true
 	}
-	for _, block := range cidrs {
-		if block.Contains(ip) {
+	for _, p := range extraBlocked {
+		if p.Contains(addr) {
 			return true
 		}
 	}
 	return false
 }
 
-// SafeDialer returns a dial function that blocks private IPs
-func SafeDialer(dialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func isAllowedPort(port string) bool {
+	return port == "80" || port == "443"
+}
+
+// SafeDialer returns a DialContext function that refuses non-web ports before
+// any DNS lookup, resolves the host with lookup, and refuses the whole dial if
+// any resolved address is blocked (a mixed public/private answer is a DNS
+// rebinding trick, not something to retry). The connection is then made to
+// the validated address, never to the host name, so a second lookup cannot
+// change the destination.
+func SafeDialer(dialer *net.Dialer, lookup LookupFunc) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupIPAddr
+	}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
 		}
 
-		// Resolve IP
-		ips, err := dialer.Resolver.LookupIPAddr(ctx, host)
+		bypass := allowLocalIPs.Load()
+		if !bypass && !isAllowedPort(port) {
+			return nil, ErrBlockedPort
+		}
+
+		addrs, err := resolve(ctx, host, lookup)
 		if err != nil {
 			return nil, err
 		}
-
-		if len(ips) == 0 {
-			return nil, errors.New("no IP addresses found")
+		if len(addrs) == 0 {
+			return nil, ErrNoAddresses
 		}
-
-		// Check first IP (or iterate)
-		// For strict safety, we dial the first valid one we find, but we must validate it.
-		var targetIP net.IP
-		for _, ip := range ips {
-			if isPrivateIP(ip.IP) {
-				continue // Skip private IPs
+		if !bypass {
+			for _, a := range addrs {
+				if isBlockedAddr(a) {
+					return nil, ErrBlockedAddress
+				}
 			}
-			targetIP = ip.IP
-			break
 		}
 
-		if targetIP == nil {
-			return nil, errors.New("blocked: resolves to private/local IP")
+		var lastErr error
+		for _, a := range addrs {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(a.Unmap().String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
 		}
-
-		// Dial the specific IP
-		// We reconstruct the address using the validated IP
-		// Note: This prevents DNS rebinding because we validated THIS IP.
-		// However, for TLS (HTTPS), we need the hostname for SNI.
-		// net.Dialer handles this if we pass the original hostname?
-		// No, dialer takes (network, address). If we pass IP:Port, SNI might break.
-		// But SafeDialer is used for the TCP connection. TLS handshake happens ON TOP of this connection.
-		// The http.Transport handles SNI using the Request.URL.Host.
-		// So dialing IP:Port is safe for the TCP layer.
-		
-		return dialer.DialContext(ctx, network, net.JoinHostPort(targetIP.String(), port))
+		return nil, lastErr
 	}
 }
 
-// NewSafeTransport returns an http.Transport configured for security
+// resolve returns the candidate addresses for host: the literal itself if host
+// is an IP literal, otherwise the DNS answer.
+func resolve(ctx context.Context, host string, lookup LookupFunc) ([]netip.Addr, error) {
+	if a, err := netip.ParseAddr(host); err == nil {
+		return []netip.Addr{a}, nil
+	}
+	ipAddrs, err := lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]netip.Addr, 0, len(ipAddrs))
+	for _, ia := range ipAddrs {
+		a, ok := netip.AddrFromSlice(ia.IP)
+		if !ok {
+			// An unparseable answer is treated as hostile rather than skipped.
+			return nil, ErrBlockedAddress
+		}
+		if ia.Zone != "" {
+			a = a.WithZone(ia.Zone)
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// NewSafeTransport returns an http.Transport whose connections go through
+// SafeDialer with the system resolver.
 func NewSafeTransport() *http.Transport {
 	dialer := &net.Dialer{
-		Timeout:   2 * time.Second, // Fast connect timeout
+		Timeout:   2 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
 
 	return &http.Transport{
-		DialContext:           SafeDialer(dialer),
+		DialContext:           SafeDialer(dialer, net.DefaultResolver.LookupIPAddr),
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second, // Fast TLS timeout
+		TLSHandshakeTimeout:   5 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 }

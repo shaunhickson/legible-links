@@ -11,11 +11,11 @@ import (
 
 func TestGzipMiddleware(t *testing.T) {
 	testData := []byte("hello world this is some compressible text that should be compressed")
-	
+
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(testData)
 	})
-	
+
 	middlewareHandler := Gzip(handler)
 
 	// Test case 1: Client accepts gzip

@@ -1,0 +1,18 @@
+{
+  "titles": {
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ": "Rick Astley - Never Gonna Give You Up (Official Video)",
+    "https://example.org/post": "An example post"
+  },
+  "details": {
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ": {
+      "title": "Rick Astley - Never Gonna Give You Up (Official Video)",
+      "description": "Rick Astley",
+      "platform": "YouTube"
+    },
+    "https://example.org/post": {
+      "title": "An example post",
+      "description": "A description",
+      "platform": "Generic"
+    }
+  }
+}

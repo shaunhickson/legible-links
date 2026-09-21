@@ -23,6 +23,22 @@ export default tseslint.config(
         'warn',
         { allowConstantExport: true },
       ],
+      // Untrusted text (titles, descriptions, domains) must never be parsed as markup.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "AssignmentExpression[left.property.name='innerHTML']",
+          message: 'Do not assign innerHTML. Build nodes with createElement/textContent (see src/utils/render.ts).',
+        },
+        {
+          selector: "AssignmentExpression[left.property.name='outerHTML']",
+          message: 'Do not assign outerHTML. Build nodes with createElement/textContent (see src/utils/render.ts).',
+        },
+        {
+          selector: "CallExpression[callee.property.name='insertAdjacentHTML']",
+          message: 'Do not call insertAdjacentHTML. Build nodes with createElement/textContent (see src/utils/render.ts).',
+        },
+      ],
     },
   },
 );

@@ -48,14 +48,14 @@ build-website:
 # --- Docker ---
 docker-build:
 	@echo "--- Building Docker Image ---"
-	docker build -t youtube-replacer-backend ./backend
+	docker build -t legible-links-backend ./backend
 
 # --- Development ---
 dev:
 	@echo "Run 'make backend-dev', 'make extension-dev', and 'make website-dev' in separate terminals."
 
 backend-dev:
-	cd backend && go run main.go
+	cd backend && go run .
 
 extension-dev:
 	cd extension && npm run dev
