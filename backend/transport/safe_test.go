@@ -2,53 +2,190 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"net"
+	"net/netip"
 	"testing"
+	"time"
 )
 
-func TestIsPrivateIP(t *testing.T) {
+func TestIsBlockedAddr(t *testing.T) {
 	tests := []struct {
-		ip      string
-		private bool
+		addr    string
+		blocked bool
 	}{
+		// Blocked
+		{"0.0.0.0", true},
+		{"0.1.2.3", true},
 		{"127.0.0.1", true},
 		{"10.0.0.1", true},
-		{"192.168.1.1", true},
 		{"172.16.0.1", true},
-		{"172.31.255.255", true}, // Private range
-		{"169.254.169.254", true}, // Link-local
-		{"8.8.8.8", false},       // Google DNS
-		{"1.1.1.1", false},       // Cloudflare
-		{"::1", true},            // IPv6 Loopback
-		{"fc00::1", true},        // IPv6 Unique Local
-		{"2001:4860:4860::8888", false}, // IPv6 Public
+		{"172.31.255.255", true},
+		{"192.168.1.1", true},
+		{"100.64.0.1", true},
+		{"169.254.169.254", true},
+		{"192.0.0.1", true},
+		{"192.0.2.1", true},
+		{"198.18.0.1", true},
+		{"198.51.100.1", true},
+		{"203.0.113.1", true},
+		{"224.0.0.1", true},
+		{"240.0.0.1", true},
+		{"255.255.255.255", true},
+		{"::", true},
+		{"::1", true},
+		{"::ffff:127.0.0.1", true},
+		{"::ffff:10.0.0.1", true},
+		{"::ffff:169.254.169.254", true},
+		{"64:ff9b::7f00:1", true},
+		{"2001:db8::1", true},
+		{"fe80::1", true},
+		{"fec0::1", true},
+		{"fc00::1", true},
+		{"fd12:3456::1", true},
+		{"ff02::1", true},
+		{"ff01::1", true},
+		// Allowed
+		{"8.8.8.8", false},
+		{"1.1.1.1", false},
+		{"93.184.216.34", false},
+		{"2001:4860:4860::8888", false},
+		{"2606:4700:4700::1111", false},
+		{"::ffff:8.8.8.8", false},
 	}
 
 	for _, tc := range tests {
-		ip := net.ParseIP(tc.ip)
-		if got := isPrivateIP(ip); got != tc.private {
-			t.Errorf("isPrivateIP(%s) = %v; want %v", tc.ip, got, tc.private)
+		t.Run(tc.addr, func(t *testing.T) {
+			addr := netip.MustParseAddr(tc.addr)
+			if got := isBlockedAddr(addr); got != tc.blocked {
+				t.Errorf("isBlockedAddr(%s) = %v; want %v", tc.addr, got, tc.blocked)
+			}
+		})
+	}
+
+	if !isBlockedAddr(netip.Addr{}) {
+		t.Error("zero-value (invalid) address should be blocked")
+	}
+}
+
+// failingLookup fails the test if it is ever called.
+func failingLookup(t *testing.T) LookupFunc {
+	return func(_ context.Context, host string) ([]net.IPAddr, error) {
+		t.Errorf("DNS lookup for %q should not have happened", host)
+		return nil, errors.New("unexpected lookup")
+	}
+}
+
+// staticLookup returns the same answer for every host.
+func staticLookup(ips ...string) LookupFunc {
+	return func(_ context.Context, _ string) ([]net.IPAddr, error) {
+		out := make([]net.IPAddr, 0, len(ips))
+		for _, ip := range ips {
+			out = append(out, net.IPAddr{IP: net.ParseIP(ip)})
+		}
+		return out, nil
+	}
+}
+
+func TestSafeDialer_RefusesNonWebPortBeforeLookup(t *testing.T) {
+	dial := SafeDialer(&net.Dialer{Timeout: 50 * time.Millisecond}, failingLookup(t))
+
+	for _, addr := range []string{"8.8.8.8:8080", "example.com:22", "example.com:8443", "[2001:4860:4860::8888]:53"} {
+		_, err := dial(context.Background(), "tcp", addr)
+		if !errors.Is(err, ErrBlockedPort) {
+			t.Errorf("dial(%s): got %v, want ErrBlockedPort", addr, err)
 		}
 	}
 }
 
-func TestSafeDialer_Blocked(t *testing.T) {
-	// Create a safe dialer
-	dialer := &net.Dialer{}
-	safeDial := SafeDialer(dialer)
+func TestSafeDialer_RefusesBlockedLiterals(t *testing.T) {
+	dial := SafeDialer(&net.Dialer{Timeout: 50 * time.Millisecond}, failingLookup(t))
 
-	// Try to dial localhost (should fail)
-	// We use a random port that is likely closed, but the blocking happens BEFORE connection
-	_, err := safeDial(context.Background(), "tcp", "127.0.0.1:1234")
-	if err == nil {
-		t.Error("Expected error for 127.0.0.1, got nil")
-	} else if err.Error() != "blocked: resolves to private/local IP" {
-		t.Errorf("Expected blocked error, got: %v", err)
+	for _, addr := range []string{"127.0.0.1:80", "192.168.1.1:80", "169.254.169.254:80", "[::1]:443", "[::ffff:127.0.0.1]:80", "0.0.0.0:80"} {
+		_, err := dial(context.Background(), "tcp", addr)
+		if !errors.Is(err, ErrBlockedAddress) {
+			t.Errorf("dial(%s): got %v, want ErrBlockedAddress", addr, err)
+		}
 	}
+}
 
-	// Try to dial private IP
-	_, err = safeDial(context.Background(), "tcp", "192.168.1.1:80")
-	if err == nil {
-		t.Error("Expected error for 192.168.1.1, got nil")
+func TestSafeDialer_RefusesPrivateDNSAnswer(t *testing.T) {
+	dial := SafeDialer(&net.Dialer{Timeout: 50 * time.Millisecond}, staticLookup("10.0.0.1"))
+
+	_, err := dial(context.Background(), "tcp", "evil.example:80")
+	if !errors.Is(err, ErrBlockedAddress) {
+		t.Errorf("got %v, want ErrBlockedAddress", err)
 	}
+}
+
+func TestSafeDialer_RefusesMixedDNSAnswer(t *testing.T) {
+	// A public address first and a private one second: the whole dial must be
+	// refused, not retried against the public address.
+	dial := SafeDialer(&net.Dialer{Timeout: 50 * time.Millisecond}, staticLookup("8.8.8.8", "10.0.0.1"))
+
+	_, err := dial(context.Background(), "tcp", "evil.example:443")
+	if !errors.Is(err, ErrBlockedAddress) {
+		t.Errorf("got %v, want ErrBlockedAddress", err)
+	}
+}
+
+func TestSafeDialer_EmptyDNSAnswer(t *testing.T) {
+	dial := SafeDialer(&net.Dialer{Timeout: 50 * time.Millisecond}, staticLookup())
+
+	_, err := dial(context.Background(), "tcp", "nowhere.example:80")
+	if !errors.Is(err, ErrNoAddresses) {
+		t.Errorf("got %v, want ErrNoAddresses", err)
+	}
+}
+
+func TestSafeDialer_DNSErrorPropagates(t *testing.T) {
+	want := errors.New("nxdomain")
+	dial := SafeDialer(&net.Dialer{Timeout: 50 * time.Millisecond}, func(context.Context, string) ([]net.IPAddr, error) {
+		return nil, want
+	})
+
+	_, err := dial(context.Background(), "tcp", "nowhere.example:80")
+	if !errors.Is(err, want) {
+		t.Errorf("got %v, want %v", err, want)
+	}
+}
+
+func TestSafeDialer_AllowLocalIPsBypass(t *testing.T) {
+	SetAllowLocalIPs(true)
+	t.Cleanup(func() { SetAllowLocalIPs(false) })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	dial := SafeDialer(&net.Dialer{Timeout: time.Second}, failingLookup(t))
+	conn, err := dial(context.Background(), "tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("expected dial to succeed with AllowLocalIPs, got %v", err)
+	}
+	_ = conn.Close()
+}
+
+func TestSafeDialer_DialsValidatedAddress(t *testing.T) {
+	// With the bypass on, a host name that "resolves" to the listener's address
+	// must be dialed at that address, proving the dial uses the validated IP
+	// rather than re-resolving the host name.
+	SetAllowLocalIPs(true)
+	t.Cleanup(func() { SetAllowLocalIPs(false) })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	dial := SafeDialer(&net.Dialer{Timeout: time.Second}, staticLookup("127.0.0.1"))
+	conn, err := dial(context.Background(), "tcp", "does-not-exist.invalid:"+port)
+	if err != nil {
+		t.Fatalf("expected dial to succeed, got %v", err)
+	}
+	_ = conn.Close()
 }

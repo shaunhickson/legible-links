@@ -67,13 +67,13 @@ func (r *GitHubResolver) Resolve(ctx context.Context, u *url.URL) (*Result, erro
 	repo := parts[1]
 
 	apiURL := fmt.Sprintf("%s/repos/%s/%s", r.baseURL, owner, repo)
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "youtube-url-replacer/1.0 (+https://github.com/shaunhickson/youtube-url-replacer)")
+	req.Header.Set("User-Agent", UserAgent)
 	if r.token != "" {
 		req.Header.Set("Authorization", "token "+r.token)
 	}
@@ -93,7 +93,7 @@ func (r *GitHubResolver) Resolve(ctx context.Context, u *url.URL) (*Result, erro
 	}
 
 	var data githubRepoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := json.NewDecoder(LimitJSON(resp.Body)).Decode(&data); err != nil {
 		return nil, err
 	}
 

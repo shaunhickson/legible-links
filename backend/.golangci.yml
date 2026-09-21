@@ -1,0 +1,40 @@
+# Lint policy for the backend. Security findings are failures, not warnings.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard   # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - gosec
+    - bodyclose
+    - noctx
+    - gocritic
+    - misspell
+    - unconvert
+    - unparam
+    - prealloc
+    - nilerr
+    - errorlint
+  settings:
+    gosec:
+      excludes:
+        - G104   # unhandled errors: errcheck covers this with better granularity
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+          - bodyclose
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

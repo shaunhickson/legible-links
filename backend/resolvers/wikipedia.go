@@ -3,12 +3,16 @@ package resolvers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var wikiLangPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 type WikipediaResolver struct {
 	client *http.Client
@@ -24,34 +28,37 @@ func (r *WikipediaResolver) Name() string {
 	return "wikipedia"
 }
 
+func isWikipediaHost(host string) bool {
+	host = strings.ToLower(host)
+	return host == "wikipedia.org" || strings.HasSuffix(host, ".wikipedia.org")
+}
+
 func (r *WikipediaResolver) CanHandle(u *url.URL) bool {
-	host := strings.ToLower(u.Host)
-	return strings.HasSuffix(host, "wikipedia.org") && strings.HasPrefix(u.Path, "/wiki/")
+	return isWikipediaHost(u.Hostname()) && strings.HasPrefix(u.Path, "/wiki/")
 }
 
 func (r *WikipediaResolver) Resolve(ctx context.Context, u *url.URL) (*Result, error) {
 	// Extract the article title from the URL path (/wiki/Title)
 	parts := strings.Split(u.Path, "/")
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid wikipedia path")
+	if len(parts) < 3 || parts[2] == "" {
+		return nil, errors.New("invalid wikipedia path")
 	}
 	articleTitle := parts[2]
-	
-	// Wikipedia API: https://en.wikipedia.org/api/rest_v1/page/summary/{title}
-	// Note: We extract the language subdomain from the host (e.g. en.wikipedia.org -> en)
-	hostParts := strings.Split(strings.ToLower(u.Host), ".")
+
+	// The language is the subdomain (en.wikipedia.org -> en); default to en.
+	hostParts := strings.Split(strings.ToLower(u.Hostname()), ".")
 	lang := "en"
-	if len(hostParts) == 3 {
+	if len(hostParts) == 3 && wikiLangPattern.MatchString(hostParts[0]) {
 		lang = hostParts[0]
 	}
 
-	apiURL := fmt.Sprintf("https://%s.wikipedia.org/api/rest_v1/page/summary/%s", lang, articleTitle)
+	apiURL := fmt.Sprintf("https://%s.wikipedia.org/api/rest_v1/page/summary/%s", lang, url.PathEscape(articleTitle))
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "youtube-url-replacer/1.0 (https://github.com/shaunhickson/youtube-url-replacer)")
+	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := r.client.Do(req)
@@ -69,7 +76,7 @@ func (r *WikipediaResolver) Resolve(ctx context.Context, u *url.URL) (*Result, e
 		Description string `json:"description"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := json.NewDecoder(LimitJSON(resp.Body)).Decode(&data); err != nil {
 		return nil, err
 	}
 

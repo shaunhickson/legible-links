@@ -1,17 +1,30 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/sph/youtube-url-replacer/backend/logger"
-	"github.com/sph/youtube-url-replacer/backend/middleware"
-	"github.com/sph/youtube-url-replacer/backend/resolvers"
+
+	"github.com/shaunhickson/legible-links/backend/logger"
+	"github.com/shaunhickson/legible-links/backend/middleware"
+	"github.com/shaunhickson/legible-links/backend/resolvers"
+)
+
+const (
+	// globalMaxConcurrentResolves bounds outbound fetches across all requests.
+	globalMaxConcurrentResolves = 64
+	// shutdownTimeout is how long in-flight requests get to finish on SIGTERM.
+	shutdownTimeout = 10 * time.Second
 )
 
 func getEnvInt(key string, defaultVal int) int {
@@ -27,6 +40,13 @@ func main() {
 	// Initialize Structured Logger
 	logger.Init()
 
+	if err := run(); err != nil {
+		slog.Error("Server exited with error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// Load .env file if it exists
 	if err := godotenv.Load(); err != nil {
 		slog.Info("No .env file found, relying on environment variables")
@@ -37,42 +57,86 @@ func main() {
 		port = "8080"
 	}
 
-	apiKey := os.Getenv("YOUTUBE_API_KEY")
+	if os.Getenv("GOOGLE_CLOUD_PROJECT") != "" {
+		slog.Warn("GOOGLE_CLOUD_PROJECT is set but ignored: Firestore support was removed; using the in-memory cache")
+	}
+
+	// Root context: cancelled on SIGINT/SIGTERM, which also stops background work.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Initialize Rate Limiter
-	rpm := getEnvInt("RATE_LIMIT_RPM", 60)
-	burst := getEnvInt("RATE_LIMIT_BURST", 20)
-	rateLimiter := middleware.NewRateLimiter(rpm, burst)
+	middleware.TrustedProxyHops = getEnvInt("TRUSTED_PROXY_HOPS", 0)
+	rateLimiter := middleware.NewRateLimiter(getEnvInt("RATE_LIMIT_RPM", 60), getEnvInt("RATE_LIMIT_BURST", 20))
+	rateLimiter.SetGlobalLimit(getEnvInt("GLOBAL_RATE_LIMIT_RPS", 50), getEnvInt("GLOBAL_RATE_LIMIT_BURST", 100))
 	// Clean up old visitors every minute, expire after 3 minutes
-	rateLimiter.CleanupBackground(1*time.Minute, 3*time.Minute)
+	rateLimiter.CleanupBackground(ctx, 1*time.Minute, 3*time.Minute)
 
-	// Initialize Cache (Firestore or Memory)
-	var cache resolvers.Cache
-	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-
-	if projectID != "" {
-		slog.Info("Initializing Firestore Cache", "project_id", projectID)
-		fsCache, err := NewFirestoreCache(projectID)
-		if err != nil {
-			slog.Error("Failed to initialize Firestore", "error", err)
-			os.Exit(1)
-		}
-		cache = fsCache
-	} else {
-		slog.Info("Initializing In-Memory Cache (Non-persistent)")
-		cache = NewInMemoryCache()
-	}
+	// Initialize Cache (bounded, in-memory, non-persistent)
+	slog.Info("Initializing in-memory cache", "max_entries", DefaultCacheMaxEntries, "ttl", DefaultCacheTTL.String())
+	cache := NewInMemoryCache(DefaultCacheMaxEntries, DefaultCacheTTL)
 
 	// Initialize Resolver Manager
 	manager := resolvers.NewResolverManager(cache)
+	if ms := getEnvInt("RESOLVER_TIMEOUT_MS", 0); ms > 0 {
+		manager.SetTimeout(time.Duration(ms) * time.Millisecond)
+	}
+	manager.SetMaxConcurrent(getEnvInt("MAX_CONCURRENT_RESOLVES", resolvers.DefaultMaxConcurrent))
+	manager.SetGlobalSemaphore(resolvers.NewSemaphore(globalMaxConcurrentResolves))
 
-	// Configure Timeout
-	if timeoutStr := os.Getenv("RESOLVER_TIMEOUT_MS"); timeoutStr != "" {
-		if ms, err := strconv.Atoi(timeoutStr); err == nil {
-			manager.SetTimeout(time.Duration(ms) * time.Millisecond)
+	registerResolvers(manager)
+
+	handler := NewHandler(manager)
+	handler.MaxItems = getEnvInt("MAX_ITEMS_PER_REQUEST", 50)
+	handler.MaxBodyBytes = int64(getEnvInt("MAX_BODY_BYTES", 10240))
+
+	// Set up routes (RequestLogger -> Gzip -> RateLimiter -> Handler)
+	mux := http.NewServeMux()
+	mux.Handle("/resolve", middleware.RequestLogger(middleware.Gzip(rateLimiter.Middleware(handler))))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		setSecurityHeaders(w.Header())
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("OK")); err != nil {
+			slog.Error("Health check write failed", "error", err)
 		}
+	})
+
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
+	slog.Info("Server listening", "port", port)
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		slog.Info("Shutdown signal received, draining connections", "timeout", shutdownTimeout.String())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		slog.Info("Server stopped")
+		return nil
+	}
+}
+
+// registerResolvers wires up every resolver, honouring ENABLED_RESOLVERS
+// (comma-separated names) when set. None of them needs an API key.
+func registerResolvers(manager *resolvers.ResolverManager) {
 	enabledResolvers := os.Getenv("ENABLED_RESOLVERS")
 	isEnabled := func(name string) bool {
 		if enabledResolvers == "" {
@@ -86,83 +150,21 @@ func main() {
 		return false
 	}
 
-	// Register YouTube Resolver
 	if isEnabled("youtube") {
-		ytResolver, err := resolvers.NewYouTubeResolver(apiKey)
-		if err != nil {
-			slog.Error("Failed to create YouTube resolver", "error", err)
-			os.Exit(1)
-		}
-		manager.Register(ytResolver)
+		manager.Register(resolvers.NewYouTubeResolver())
 	}
-
-	// Register Unshortener Resolver
 	if isEnabled("unshortener") {
 		manager.Register(resolvers.NewUnshortenerResolver(manager))
 	}
-
-	// Register Twitter Resolver
-	if isEnabled("twitter") {
-		twitterBearerToken := os.Getenv("TWITTER_BEARER_TOKEN")
-		if twitterBearerToken != "" {
-			manager.Register(resolvers.NewTwitterResolver(twitterBearerToken))
-		}
-	}
-
-	// Register LinkedIn Resolver
-	if isEnabled("linkedin") {
-		linkedinAccessToken := os.Getenv("LINKEDIN_ACCESS_TOKEN")
-		if linkedinAccessToken != "" {
-			manager.Register(resolvers.NewLinkedInResolver(linkedinAccessToken))
-		}
-	}
-
-	// Register GitHub Resolver
 	if isEnabled("github") {
-		githubToken := os.Getenv("GITHUB_TOKEN")
-		manager.Register(resolvers.NewGitHubResolver(githubToken))
+		// GITHUB_TOKEN is optional; it only raises the API rate limit.
+		manager.Register(resolvers.NewGitHubResolver(os.Getenv("GITHUB_TOKEN")))
 	}
-
-	// Register Reddit Resolver
-	if isEnabled("reddit") {
-		manager.Register(resolvers.NewRedditResolver())
-	}
-
-	// Register Wikipedia Resolver
 	if isEnabled("wikipedia") {
 		manager.Register(resolvers.NewWikipediaResolver())
 	}
-
-	// Register Spotify Resolver
-	if isEnabled("spotify") {
-		spotifyClientID := os.Getenv("SPOTIFY_CLIENT_ID")
-		spotifyClientSecret := os.Getenv("SPOTIFY_CLIENT_SECRET")
-		if spotifyClientID != "" && spotifyClientSecret != "" {
-			manager.Register(resolvers.NewSpotifyResolver(spotifyClientID, spotifyClientSecret))
-		}
-	}
-
-	// Register OpenGraph Resolver (Fallback)
+	// OpenGraph is the generic fallback and must be registered last.
 	if isEnabled("opengraph") {
 		manager.Register(resolvers.NewOpenGraphResolver())
-	}
-
-	handler := NewHandler(cache, manager)
-	handler.MaxItems = getEnvInt("MAX_ITEMS_PER_REQUEST", 50)
-	handler.MaxBodyBytes = int64(getEnvInt("MAX_BODY_BYTES", 10240))
-
-	// Set up routes (RequestLogger -> RateLimiter -> Handler)
-	http.Handle("/resolve", middleware.RequestLogger(middleware.Gzip(rateLimiter.Middleware(handler))))
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("OK")); err != nil {
-			slog.Error("Health check write failed", "error", err)
-		}
-	})
-
-	slog.Info("Server listening", "port", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		slog.Error("Failed to start server", "error", err)
-		os.Exit(1)
 	}
 }

@@ -21,7 +21,7 @@ func Init() {
 			return a
 		},
 	}
-	
+
 	// Enable Debug level via env var
 	if os.Getenv("DEBUG") == "true" {
 		opts.Level = slog.LevelDebug

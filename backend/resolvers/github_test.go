@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sph/youtube-url-replacer/backend/transport"
+	"github.com/shaunhickson/legible-links/backend/transport"
 )
 
 func TestGitHubResolver(t *testing.T) {
-	transport.AllowLocalIPs = true
-	defer func() { transport.AllowLocalIPs = false }()
+	transport.SetAllowLocalIPs(true)
+	t.Cleanup(func() { transport.SetAllowLocalIPs(false) })
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/owner/repo", func(w http.ResponseWriter, r *http.Request) {
