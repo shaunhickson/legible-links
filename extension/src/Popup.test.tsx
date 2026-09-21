@@ -49,7 +49,7 @@ describe('Popup', () => {
         render(<Popup />);
     });
     
-    expect(screen.getByText('LinkLens')).toBeInTheDocument();
+    expect(screen.getByText('Legible Links')).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
   });
 

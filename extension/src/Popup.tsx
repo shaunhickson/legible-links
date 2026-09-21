@@ -68,7 +68,7 @@ const Popup: React.FC = () => {
     <div className="container">
       <div className="header">
         <img src="/icons/icon.svg" alt="Logo" style={{ width: '24px', height: '24px', marginRight: '8px' }} />
-        <h1>LinkLens</h1>
+        <h1>Legible Links</h1>
       </div>
 
       <div className="content">

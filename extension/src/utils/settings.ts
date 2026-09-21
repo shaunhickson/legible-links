@@ -19,10 +19,33 @@ export const DEFAULT_SETTINGS: Settings = {
     theme: 'system',
 };
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * A backend URL must be https, or http to localhost only, and carry no credentials.
+ */
+export function isValidApiUrl(s: string): boolean {
+    if (typeof s !== 'string') return false;
+    let u: URL;
+    try {
+        u = new URL(s);
+    } catch {
+        return false;
+    }
+    if (u.username || u.password) return false;
+    if (u.protocol === 'https:') return true;
+    if (u.protocol === 'http:') return LOCAL_HOSTS.has(u.hostname.toLowerCase());
+    return false;
+}
+
 export async function getSettings(): Promise<Settings> {
     return new Promise((resolve) => {
         chrome.storage.local.get(DEFAULT_SETTINGS, (items) => {
-            resolve(items as Settings);
+            const settings = { ...DEFAULT_SETTINGS, ...(items as Partial<Settings>) };
+            if (!isValidApiUrl(settings.apiUrl)) {
+                settings.apiUrl = DEFAULT_SETTINGS.apiUrl;
+            }
+            resolve(settings);
         });
     });
 }
