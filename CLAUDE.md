@@ -12,6 +12,7 @@ Read `docs/PLAN_2026-09.md` (the design record) and `docs/ROADMAP.md` (progress)
 - Backend keeps no durable state and needs no API keys. Outbound fetches go through `transport.NewSafeTransport()` (private/reserved IPs blocked, ports 80/443 only).
 - Fail open: if resolution fails, the raw link stays raw.
 - Security-sensitive code is written tests-first (XSS payloads, bidi overrides, SSRF table, spoofed `X-Forwarded-For`).
+- `extension/src/privacy-contract.test.ts` is the specification of what may leave the browser and what may change on a page. A new guard, resolver, or mode adds rows there first; the README and privacy policy may only claim what it proves.
 
 ## Process
 - One branch and one PR per change, with the reasoning in the PR description. Design documents only for architectural changes (this plan is one).

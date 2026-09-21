@@ -7,8 +7,8 @@ Safe to sideload and share with friends.
 - [x] Purge superseded design docs, Terraform, agent files, stale artifacts; fix `.gitignore`
 - [x] Rename to Legible Links (extension, backend module, site, repo)
 - [x] Firestore removed: live env var dropped, `video_titles` collection deleted, code deleted
-- [ ] Extension: XSS fix (no `innerHTML`), title sanitizer, domain always shown, sensitive-URL filter, editable-context and text/href-mismatch guards, batch chunking, dedupe fix, permissions trimmed, `apiUrl` validation, tests, ESLint guard
-- [ ] Backend: no URLs or IPs in logs, rate limiter keyed on the trusted proxy hop, SSRF blocklist and port allowlist, server timeouts, bounded cache, HTML tokenizer, keyless YouTube, secret-dependent resolvers removed, tests
+- [x] Extension: XSS fix (no `innerHTML`), title sanitizer, domain always shown, sensitive-URL filter, editable-context and text/href-mismatch guards, batch chunking, dedupe fix, permissions trimmed, `apiUrl` validation, tests, ESLint guard
+- [x] Backend: no URLs or IPs in logs, rate limiter keyed on the trusted proxy hop, SSRF blocklist and port allowlist, server timeouts, bounded cache, HTML tokenizer, keyless YouTube, secret-dependent resolvers removed, tests
 - [ ] Merge, deploy, then remove the `YOUTUBE_API_KEY` secret from the live service and Secret Manager
 
 ## M1 — Privacy architecture

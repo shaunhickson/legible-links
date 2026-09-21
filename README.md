@@ -58,7 +58,7 @@ cd extension && npm run lint && npx vitest run && npm run test:e2e
 cd backend && go vet ./... && golangci-lint run ./... && go test -race -cover ./...
 ```
 
-Backend configuration is entirely optional environment variables: `PORT` (8080), `RATE_LIMIT_RPM` (60), `RATE_LIMIT_BURST` (20), `GLOBAL_RATE_LIMIT_RPS` (50), `TRUSTED_PROXY_HOPS` (0; set to 1 behind Cloud Run), `RESOLVER_TIMEOUT_MS` (2000), `MAX_ITEMS_PER_REQUEST` (50), `MAX_BODY_BYTES` (10240), `ENABLED_RESOLVERS` (all).
+Backend configuration is entirely optional environment variables: `PORT` (8080), `RATE_LIMIT_RPM` (60), `RATE_LIMIT_BURST` (20), `GLOBAL_RATE_LIMIT_RPS` (50), `GLOBAL_RATE_LIMIT_BURST` (100), `MAX_CONCURRENT_RESOLVES` (16), `TRUSTED_PROXY_HOPS` (0; set to 1 behind Cloud Run), `RESOLVER_TIMEOUT_MS` (2000), `MAX_ITEMS_PER_REQUEST` (50), `MAX_BODY_BYTES` (10240), `ENABLED_RESOLVERS` (all).
 
 ## Self-hosting the backend
 
