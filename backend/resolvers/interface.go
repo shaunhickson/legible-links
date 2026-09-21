@@ -10,6 +10,10 @@ type Result struct {
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
 	Platform    string `json:"platform"`
+	// FinalURL is set when the resolved URL differed from the requested one,
+	// e.g. after following a shortener. The extension shows its host as the
+	// destination and the original host as "via".
+	FinalURL string `json:"finalUrl,omitempty"`
 }
 
 // Cache defines the interface for storing and retrieving results
