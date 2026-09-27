@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { classifyUrl, textDomainMatchesHref, isEditableContext } from './sensitive';
+import { classifyUrl, hasHighEntropySegment, isEditableContext, isSensitivePageHost, stripForTransmission, textDomainMatchesHref } from './sensitive';
 
 describe('classifyUrl', () => {
     it.each<[string, 'ok' | 'skip', string]>([
@@ -211,5 +211,82 @@ describe('isEditableContext', () => {
         const a = anchorInside(div);
         document.designMode = 'on';
         expect(isEditableContext(a)).toBe(true);
+    });
+});
+
+describe('stripForTransmission', () => {
+    it.each<[string, string, string]>([
+        ['https://example.com/page#section-2', 'https://example.com/page', 'fragment'],
+        ['https://example.com/?utm_source=x&utm_medium=email&utm_campaign=c', 'https://example.com/', 'utm_* only'],
+        ['https://example.com/read?utm_source=nl&id=7&fbclid=IwAR0', 'https://example.com/read?id=7', 'keeps other params in place'],
+        ['https://example.com/?a=1&gclid=x&b=2', 'https://example.com/?a=1&b=2', 'order preserved'],
+        ['https://example.com/?UTM_Source=x&Si=abc', 'https://example.com/', 'names are case-insensitive'],
+        ['https://example.com/?q=a%20b&utm_term=t', 'https://example.com/?q=a%20b', 'surviving encoding untouched'],
+        ['https://example.com/?q=hello+world', 'https://example.com/?q=hello+world', 'plus signs untouched'],
+        ['https://youtu.be/dQw4w9WgXcQ?si=Ab12&feature=share', 'https://youtu.be/dQw4w9WgXcQ', 'si and feature'],
+        ['https://example.com/?ref_src=twsrc&ref_url=x&_hsenc=1&_hsmi=2&vero_id=3&yclid=4&twclid=5&ttclid=6&gbraid=7&wbraid=8&mc_cid=9&mc_eid=10&igshid=11&dclid=12&msclkid=13', 'https://example.com/', 'the whole list'],
+        ['https://example.com/?utm', 'https://example.com/?utm', 'utm without underscore is kept'],
+        ['https://example.com/?flag', 'https://example.com/?flag', 'valueless param kept'],
+        ['https://example.com/a?x=1#y', 'https://example.com/a?x=1', 'fragment after query'],
+        ['not a url', 'not a url', 'unparseable input is returned as-is'],
+    ])('%s -> %s (%s)', (href, expected) => {
+        expect(stripForTransmission(href)).toBe(expected);
+    });
+});
+
+describe('isSensitivePageHost', () => {
+    it.each<[string, boolean]>([
+        ['mail.google.com', true],
+        ['MAIL.GOOGLE.COM', true],
+        ['outlook.live.com', true],
+        ['outlook.office.com', true],
+        ['outlook.office365.com', true],
+        ['outlook.com', true],
+        ['mail.yahoo.com', true],
+        ['mail.proton.me', true],
+        ['app.slack.com', true],
+        ['acme.slack.com', true],
+        ['discord.com', true],
+        ['teams.microsoft.com', true],
+        ['web.whatsapp.com', true],
+        ['web.telegram.org', true],
+        ['www.messenger.com', true],
+        ['docs.google.com', true],
+        ['drive.google.com', true],
+        ['www.notion.so', true],
+        ['acme.notion.site', true],
+        ['acme.atlassian.net', true],
+        ['acme.zendesk.com', true],
+        ['acme.freshdesk.com', true],
+        ['app.intercom.io', true],
+        ['news.ycombinator.com', false],
+        ['www.google.com', false],
+        ['slack.com', false],
+        ['notoutlook.example', false],
+        ['example.com', false],
+        ['', false],
+    ])('%s -> %s', (host, expected) => {
+        expect(isSensitivePageHost(host)).toBe(expected);
+    });
+});
+
+describe('hasHighEntropySegment', () => {
+    it.each<[string, boolean, string]>([
+        ['https://example.com/blog/2026/09/the-10-best-laptops-of-2026', false, 'hyphenated slug with a year'],
+        ['https://example.com/questions/11227809/why-is-processing-a-sorted-array-faster', false, 'numeric id plus slug'],
+        ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', false, '11-char id is below the bar'],
+        ['https://example.com/share/4f9c2a1b7e3d4c5a9b8f7e6d5c4b3a2f', true, '32 hex chars'],
+        ['https://example.com/f/123e4567-e89b-12d3-a456-426614174000', true, 'UUID'],
+        ['https://docs.example.com/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit', true, 'document id'],
+        ['https://example.com/?token=abcdefghij1234567890', true, 'mixed 20-char query value'],
+        ['https://example.com/?q=abcdefghijklmnopqrstuvwxyz', false, 'letters only'],
+        ['https://example.com/?n=12345678901234567890123', false, 'digits only'],
+        ['https://example.com/a1b2c3d4e5f6g7h8i9j', false, '19 chars is below the bar'],
+        ['https://example.com/a1b2c3d4e5f6g7h8i9j0', true, '20 chars mixing letters and digits'],
+        ['https://example.com/x-a1b2c3d4e5f6g7h8i9j0-y', true, 'run inside a hyphenated segment'],
+        ['https://example.com/abc%20def', false, 'percent-encoded space'],
+        ['not a url', false, 'unparseable'],
+    ])('%s -> %s (%s)', (href, expected) => {
+        expect(hasHighEntropySegment(href)).toBe(expected);
     });
 });

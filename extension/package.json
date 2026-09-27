@@ -1,11 +1,11 @@
 {
   "name": "legible-links-extension",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && vite build --config vite.content.config.ts",
+    "build": "tsc && vite build && vite build --config vite.content.config.ts && vite build --config vite.background.config.ts",
     "preview": "vite preview",
     "test": "vitest",
     "test:e2e": "playwright test",

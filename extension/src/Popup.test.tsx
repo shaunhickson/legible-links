@@ -51,6 +51,22 @@ describe('Popup', () => {
     
     expect(screen.getByText('Legible Links')).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.getByTestId('mode-name')).toHaveTextContent('Balanced');
+  });
+
+  it('names the current privacy mode', async () => {
+    chromeMock.storage.local.get.mockImplementation((keys, callback) => {
+      callback({ platformMode: 'hover', genericMode: 'off' });
+    });
+    chromeMock.tabs.query.mockImplementation((query, callback) => {
+        callback([{ url: 'https://example.com' }]);
+    });
+
+    await act(async () => {
+        render(<Popup />);
+    });
+
+    expect(screen.getByTestId('mode-name')).toHaveTextContent('Private');
   });
 
   it('toggles switch', async () => {

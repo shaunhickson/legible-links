@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { renderResolvedLink, restoreLink } from './render';
+import { destinationHost, renderResolvedLink, restoreLink } from './render';
 
 const HREF = 'https://www.example.com/path?q=1';
 
@@ -122,5 +122,41 @@ describe('restoreLink', () => {
         const a = makeAnchor();
         restoreLink(a);
         expect(a.textContent).toBe(HREF);
+    });
+});
+
+describe('renderResolvedLink with finalUrl', () => {
+    it('shows the final host via the original host and both URLs in the title attribute', () => {
+        const a = makeAnchor('https://bit.ly/3abc', 'https://bit.ly/3abc');
+        renderResolvedLink(a, { title: 'Landing', href: 'https://bit.ly/3abc', platform: 'generic', finalUrl: 'https://example.org/landing?x=1' });
+        expect(a.querySelector('.ll-domain')?.textContent).toBe(' · example.org via bit.ly');
+        expect(a.getAttribute('title')).toBe('https://example.org/landing?x=1 (via https://bit.ly/3abc)');
+        expect(a.getAttribute('href')).toBe('https://bit.ly/3abc');
+    });
+
+    it('ignores finalUrl when it lands on the same host, is unparseable, or is missing', () => {
+        for (const finalUrl of ['https://www.example.com/other', 'not a url', undefined, '']) {
+            const a = makeAnchor();
+            renderResolvedLink(a, { title: 'T', href: HREF, platform: 'generic', finalUrl });
+            expect(a.querySelector('.ll-domain')?.textContent, String(finalUrl)).toBe(' · www.example.com');
+            expect(a.getAttribute('title'), String(finalUrl)).toBe(HREF);
+        }
+    });
+
+    it('renders a hostile finalUrl as text', () => {
+        const a = makeAnchor();
+        renderResolvedLink(a, { title: 'T', href: HREF, platform: 'generic', finalUrl: 'https://evil.example/<img src=x onerror="window.__pwned=1">' });
+        expect(a.querySelector('img')).toBeNull();
+        expect(a.querySelector('.ll-domain')?.textContent).toBe(' · evil.example via www.example.com');
+        expect((window as unknown as { __pwned?: unknown }).__pwned).toBeUndefined();
+    });
+});
+
+describe('destinationHost', () => {
+    it('returns the final host only when it differs from the href host', () => {
+        expect(destinationHost('https://bit.ly/x', 'https://example.org/y')).toBe('example.org');
+        expect(destinationHost('https://example.org/x', 'https://EXAMPLE.org/y')).toBeNull();
+        expect(destinationHost('https://example.org/x', undefined)).toBeNull();
+        expect(destinationHost('nope', 'https://example.org/y')).toBeNull();
     });
 });

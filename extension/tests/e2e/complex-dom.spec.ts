@@ -1,60 +1,29 @@
-import { test, expect, fixtureUrl } from './fixtures';
+import { test, expect, fixtureUrl, applySettings, mockBackend, mockYouTube } from './fixtures';
 
 test.describe('Complex DOM Scenarios', () => {
-
-  test.beforeEach(async ({ page }) => {
-    await page.route('**/resolve*', async (route) => {
-      const body = route.request().postDataJSON() as { urls?: string[] } | null;
-      const urls = body?.urls ?? [];
-
-      const titles: Record<string, string> = {};
-      for (const url of urls) {
-        if (url.includes('shadowdom')) {
-          titles[url] = "Shadow DOM Link Resolved";
-        } else if (url.includes('SPA')) {
-          titles[url] = "React SPA Link Resolved";
-        } else if (url.includes('scroll')) {
-          titles[url] = `Scroll Link Resolved`;
-        } else {
-          titles[url] = "Mocked Generic Title";
-        }
-      }
-
-      await route.fulfill({ json: { titles } });
-    });
-  });
-
-  test('React SPA Test: Link injected after initial load is resolved', async ({ page }) => {
+  test('React SPA Test: Link injected after initial load is resolved', async ({ context, page }) => {
+    const oembedCalls = await mockYouTube(context);
     await page.goto(fixtureUrl('fixtures/react-spa.html'));
 
     // Wait for the simulated SPA link injection (500ms in fixture) + batching
-    const link = page.locator('a[href="https://www.youtube.com/watch?v=SPA"]');
-    await expect(link).toContainText('React SPA Link Resolved');
+    const link = page.locator('a[href="https://www.youtube.com/watch?v=spa00000001"]');
+    await expect(link).toContainText('Rick Astley');
+    expect(oembedCalls).toHaveLength(1);
   });
 
-  test('Infinite Scroll Test: Multiple links injected continuously are resolved', async ({ page }) => {
-    const batches: number[] = [];
-    await page.route('**/resolve*', async (route) => {
-      const body = route.request().postDataJSON() as { urls?: string[] } | null;
-      const urls = body?.urls ?? [];
-      batches.push(urls.length);
-      const titles: Record<string, string> = {};
-      for (const url of urls) titles[url] = 'Scroll Link Resolved';
-      await route.fulfill({ json: { titles } });
-    });
+  test('Infinite Scroll Test: 50 generic links in Everything mode are sent in batches of at most 25', async ({ context, page }) => {
+    const batches = await mockBackend(context, () => 'Scroll Link Resolved');
+    await applySettings(context, { genericMode: 'auto' });
 
     await page.goto(fixtureUrl('fixtures/infinite-scroll.html'));
 
-    // Pick a few links to verify
-    const link0 = page.locator('a[href="https://www.youtube.com/watch?v=scroll0"]');
-    const link49 = page.locator('a[href="https://www.youtube.com/watch?v=scroll49"]');
-
+    const link0 = page.locator('a[href="https://example.org/scroll/0"]');
+    const link49 = page.locator('a[href="https://example.org/scroll/49"]');
     await expect(link0).toContainText('Scroll Link Resolved');
     await expect(link49).toContainText('Scroll Link Resolved');
 
-    // 50 links are sent in chunks of at most 25 URLs per request.
-    expect(Math.max(...batches)).toBeLessThanOrEqual(25);
-    expect(batches.reduce((a, b) => a + b, 0)).toBe(50);
+    expect(Math.max(...batches.map((b) => b.length))).toBeLessThanOrEqual(25);
+    expect(batches.reduce((a, b) => a + b.length, 0)).toBe(50);
   });
 
   // Note: Currently skipped because our MutationObserver does not pierce Shadow DOM

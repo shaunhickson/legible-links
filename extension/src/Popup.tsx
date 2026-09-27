@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './Popup.css';
-import { getSettings, saveSettings, Settings, DEFAULT_SETTINGS, getDomain, isDomainAllowed } from './utils/settings';
+import { getSettings, saveSettings, Settings, DEFAULT_SETTINGS, getDomain, isDomainAllowed, modeName, MODE_LABELS } from './utils/settings';
 
 const Popup: React.FC = () => {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -103,6 +103,16 @@ const Popup: React.FC = () => {
             </label>
           </div>
         )}
+
+        <div className="card">
+          <div>
+            <div className="label-text">Privacy mode</div>
+            <div className="status" data-testid="mode-name">{MODE_LABELS[modeName(settings)]}</div>
+          </div>
+          <button className="btn" onClick={openOptions}>
+            Change
+          </button>
+        </div>
 
         <div style={{ textAlign: 'center', marginTop: '16px' }}>
           <button className="btn" onClick={openOptions}>

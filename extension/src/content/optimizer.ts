@@ -1,25 +1,29 @@
-import { isRawUrl, isYouTube } from '../utils/url';
-import { DEFAULT_SETTINGS, getDomain, getSettings, isDomainAllowed, isValidApiUrl, Settings } from '../utils/settings';
+import { isRawUrl } from '../utils/url';
+import { DEFAULT_SETTINGS, getDomain, getSettings, isDomainAllowed, normalizeSettings, Settings } from '../utils/settings';
 import { isKnownPlatform, TooltipData, uiManager } from '../utils/ui';
 import { sanitizeDescription, sanitizeTitle } from '../utils/sanitize';
 import { renderResolvedLink } from '../utils/render';
 import { classifyUrl, isEditableContext, textDomainMatchesHref } from '../utils/sensitive';
+import { Outcome, readResolveResponse, ResolvedOutcome, ResolveRequest, Trigger } from '../shared/protocol';
 
 /** Anchors enqueued over the lifetime of a page. */
 export const MAX_ANCHORS_PER_PAGE = 300;
 /** Anchors enqueued from a single MutationObserver pass. */
 export const MAX_ANCHORS_PER_PASS = 50;
-/** URLs per POST to the backend (its own cap is 50). */
+/** URLs per RESOLVE message to the worker (which batches the backend at the same size). */
 export const CHUNK_SIZE = 25;
-/** Fetch attempts per anchor before giving up on it. */
+/** Message attempts per anchor before giving up on it. */
 export const MAX_ATTEMPTS = 3;
+/** How long the pointer must rest on a deferred link before it is resolved. */
+export const HOVER_RESOLVE_DELAY_MS = 300;
 
 const BATCH_DELAY_MS = 500;
-const HOVER_DELAY_MS = 500;
-const FETCH_TIMEOUT_MS = 10000;
+const TOOLTIP_DELAY_MS = 500;
 const XHTML_NS = 'http://www.w3.org/1999/xhtml';
+const NONE: Outcome = { status: 'none' };
 
-export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
+/** Sends a RESOLVE request to the worker. The content script itself never calls fetch. */
+export type ResolveFn = (request: ResolveRequest) => Promise<unknown>;
 
 export interface TooltipUI {
     show(target: HTMLElement, data: TooltipData, theme?: string): void;
@@ -27,28 +31,15 @@ export interface TooltipUI {
 }
 
 export interface LinkOptimizerOptions {
-    fetchFn?: FetchFn;
+    resolveFn?: ResolveFn;
     doc?: Document;
     loadSettings?: () => Promise<Settings>;
     ui?: TooltipUI;
     batchDelayMs?: number;
+    hoverDelayMs?: number;
 }
 
-interface ResolveDetails {
-    platform?: string;
-    description?: string;
-}
-
-interface ResolveResponse {
-    titles: Map<string, string>;
-    details: Map<string, ResolveDetails>;
-}
-
-type AnchorState = 'pending' | 'done';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+type AnchorState = 'pending' | 'hover' | 'done';
 
 function isHtmlAnchor(node: Node): node is HTMLAnchorElement {
     return node.nodeType === 1
@@ -56,54 +47,43 @@ function isHtmlAnchor(node: Node): node is HTMLAnchorElement {
         && (node as Element).namespaceURI === XHTML_NS;
 }
 
-/**
- * Validates the backend response shape: `titles` must be an object of string -> string.
- * Anything else is treated as a failed request.
- */
-export function parseResolveResponse(data: unknown): ResolveResponse | null {
-    if (!isRecord(data) || !isRecord(data.titles)) return null;
-
-    const titles = new Map<string, string>();
-    for (const [url, title] of Object.entries(data.titles)) {
-        if (typeof title === 'string') titles.set(url, title);
-    }
-
-    const details = new Map<string, ResolveDetails>();
-    if (isRecord(data.details)) {
-        for (const [url, entry] of Object.entries(data.details)) {
-            if (!isRecord(entry)) continue;
-            details.set(url, {
-                platform: typeof entry.platform === 'string' ? entry.platform : undefined,
-                description: typeof entry.description === 'string' ? entry.description : undefined,
-            });
-        }
-    }
-
-    return { titles, details };
+/** Callback style so the same code works in Chrome and Firefox without a polyfill. */
+function sendToWorker(request: ResolveRequest): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(request, (response: unknown) => {
+            const err = chrome.runtime.lastError;
+            if (err) reject(new Error(err.message));
+            else resolve(response);
+        });
+    });
 }
 
 export class LinkOptimizer {
-    private readonly fetchFn: FetchFn;
+    private readonly resolveFn: ResolveFn;
     private readonly doc: Document;
     private readonly loadSettings: () => Promise<Settings>;
     private readonly ui: TooltipUI;
     private readonly batchDelayMs: number;
+    private readonly hoverDelayMs: number;
 
     private settings: Settings = DEFAULT_SETTINGS;
     private readonly state = new WeakMap<HTMLAnchorElement, AnchorState>();
     private readonly attempts = new WeakMap<HTMLAnchorElement, number>();
     private pending = new Map<string, HTMLAnchorElement[]>();
+    /** Anchors waiting for a hover, grouped by URL so one hover resolves all of them. */
+    private readonly deferred = new Map<string, Set<HTMLAnchorElement>>();
     private enqueuedTotal = 0;
     private batchTimer: ReturnType<typeof setTimeout> | null = null;
     private chain: Promise<void> = Promise.resolve();
     private observer: MutationObserver | null = null;
 
     constructor(options: LinkOptimizerOptions = {}) {
-        this.fetchFn = options.fetchFn ?? ((input, init) => globalThis.fetch(input, init));
+        this.resolveFn = options.resolveFn ?? sendToWorker;
         this.doc = options.doc ?? document;
         this.loadSettings = options.loadSettings ?? getSettings;
         this.ui = options.ui ?? uiManager;
         this.batchDelayMs = options.batchDelayMs ?? BATCH_DELAY_MS;
+        this.hoverDelayMs = options.hoverDelayMs ?? HOVER_RESOLVE_DELAY_MS;
     }
 
     public async start(): Promise<void> {
@@ -145,7 +125,7 @@ export class LinkOptimizer {
         }
     }
 
-    /** Processes everything queued so far without waiting for the batch timer. */
+    /** Processes everything queued so far (including hover resolutions in flight) without waiting for timers. */
     public flush(): Promise<void> {
         if (this.batchTimer !== null) {
             clearTimeout(this.batchTimer);
@@ -163,10 +143,7 @@ export class LinkOptimizer {
             for (const [key, change] of Object.entries(changes)) {
                 if (key in DEFAULT_SETTINGS) next[key] = change.newValue;
             }
-            if (typeof next.apiUrl !== 'string' || !isValidApiUrl(next.apiUrl)) {
-                next.apiUrl = DEFAULT_SETTINGS.apiUrl;
-            }
-            this.settings = next as unknown as Settings;
+            this.settings = normalizeSettings(next);
         });
     }
 
@@ -235,57 +212,72 @@ export class LinkOptimizer {
 
         for (let i = 0; i < urls.length; i += CHUNK_SIZE) {
             const chunk = urls.slice(i, i + CHUNK_SIZE);
-            const result = await this.resolve(chunk);
+            const outcomes = await this.resolve(chunk, 'auto');
 
-            if (result === null) {
+            if (outcomes === null) {
                 // Fail open: leave this and every remaining chunk untouched.
                 for (const url of urls.slice(i)) this.markFailed(batch.get(url) ?? []);
                 return;
             }
 
             for (const url of chunk) {
-                const anchors = batch.get(url) ?? [];
-                for (const anchor of anchors) this.state.set(anchor, 'done');
-
-                const title = sanitizeTitle(result.titles.get(url));
-                if (!title) continue;
-
-                const details = result.details.get(url);
-                const platform = this.pickPlatform(url, details);
-                const description = sanitizeDescription(details?.description);
-                const tooltip: TooltipData = {
-                    title,
-                    description: description || undefined,
-                    domain: getDomain(url),
-                    url,
-                    platform,
-                };
-
-                for (const anchor of anchors) {
-                    if (renderResolvedLink(anchor, { title, href: url, platform })) {
-                        this.attachHover(anchor, tooltip);
-                    }
-                }
+                this.apply(url, batch.get(url) ?? [], outcomes.get(url) ?? NONE);
             }
         }
     }
 
-    private async resolve(urls: string[]): Promise<ResolveResponse | null> {
-        try {
-            const init: RequestInit = {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ urls }),
-                credentials: 'omit',
-                cache: 'no-store',
-                referrerPolicy: 'no-referrer',
-            };
-            if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-                init.signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+    private apply(url: string, anchors: HTMLAnchorElement[], outcome: Outcome): TooltipData | null {
+        switch (outcome.status) {
+            case 'resolved':
+                for (const anchor of anchors) this.state.set(anchor, 'done');
+                this.deferred.delete(url);
+                return this.render(url, anchors, outcome);
+            case 'hover':
+                for (const anchor of anchors) {
+                    if (this.state.get(anchor) === 'done') continue;
+                    if (this.state.get(anchor) !== 'hover') {
+                        this.state.set(anchor, 'hover');
+                        this.attachHoverResolve(anchor, url);
+                    }
+                }
+                return null;
+            default:
+                for (const anchor of anchors) this.state.set(anchor, 'done');
+                this.deferred.delete(url);
+                return null;
+        }
+    }
+
+    /** Rewrites every anchor for `url`; returns the tooltip data when something was rendered. */
+    private render(url: string, anchors: HTMLAnchorElement[], outcome: ResolvedOutcome): TooltipData | null {
+        const title = sanitizeTitle(outcome.title);
+        if (!title) return null;
+
+        const platform = this.pickPlatform(outcome.platform);
+        const description = sanitizeDescription(outcome.description);
+        const tooltip: TooltipData = {
+            title,
+            description: description || undefined,
+            domain: getDomain(url),
+            url,
+            platform,
+            finalUrl: outcome.finalUrl,
+        };
+
+        let rendered = false;
+        for (const anchor of anchors) {
+            if (renderResolvedLink(anchor, { title, href: url, platform, finalUrl: outcome.finalUrl })) {
+                this.attachTooltip(anchor, tooltip);
+                rendered = true;
             }
-            const response = await this.fetchFn(this.settings.apiUrl, init);
-            if (!response.ok) return null;
-            return parseResolveResponse(await response.json());
+        }
+        return rendered ? tooltip : null;
+    }
+
+    private async resolve(urls: string[], trigger: Trigger): Promise<Map<string, Outcome> | null> {
+        try {
+            const response = await this.resolveFn({ type: 'RESOLVE', urls, trigger });
+            return readResolveResponse(response);
         } catch {
             return null;
         }
@@ -303,20 +295,71 @@ export class LinkOptimizer {
         }
     }
 
-    private pickPlatform(url: string, details?: ResolveDetails): string {
-        const platform = details?.platform?.toLowerCase();
-        if (platform && isKnownPlatform(platform)) return platform;
-        return isYouTube(url) ? 'youtube' : 'generic';
+    private pickPlatform(platform: string): string {
+        const p = platform.toLowerCase();
+        return isKnownPlatform(p) ? p : 'generic';
     }
 
-    private attachHover(anchor: HTMLAnchorElement, data: TooltipData): void {
+    /**
+     * A deferred anchor carries no visible marker. Resting the pointer on it for
+     * HOVER_RESOLVE_DELAY_MS sends one hover-triggered request; on success the
+     * link is rendered and the tooltip opens at once, since the pointer is still there.
+     */
+    private attachHoverResolve(anchor: HTMLAnchorElement, url: string): void {
+        let group = this.deferred.get(url);
+        if (!group) {
+            group = new Set();
+            this.deferred.set(url, group);
+        }
+        group.add(anchor);
+
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let hovered = false;
+        let inFlight = false;
+
+        anchor.addEventListener('mouseenter', () => {
+            hovered = true;
+            if (this.state.get(anchor) !== 'hover' || inFlight || timer !== null) return;
+            timer = setTimeout(() => {
+                timer = null;
+                inFlight = true;
+                this.chain = this.chain
+                    .then(() => this.resolveOnHover(anchor, url, () => hovered))
+                    .catch(() => undefined)
+                    .finally(() => {
+                        inFlight = false;
+                    });
+            }, this.hoverDelayMs);
+        });
+        anchor.addEventListener('mouseleave', () => {
+            hovered = false;
+            if (timer !== null) {
+                clearTimeout(timer);
+                timer = null;
+            }
+        });
+    }
+
+    private async resolveOnHover(anchor: HTMLAnchorElement, url: string, stillHovered: () => boolean): Promise<void> {
+        if (this.state.get(anchor) !== 'hover') return;
+        const outcomes = await this.resolve([url], 'hover');
+        if (outcomes === null) return; // fail open; the anchor stays deferred for a later hover
+
+        const anchors = Array.from(this.deferred.get(url) ?? [anchor]);
+        const tooltip = this.apply(url, anchors, outcomes.get(url) ?? NONE);
+        if (tooltip && stillHovered() && anchor.isConnected) {
+            this.ui.show(anchor, tooltip, this.settings.theme);
+        }
+    }
+
+    private attachTooltip(anchor: HTMLAnchorElement, data: TooltipData): void {
         let timer: ReturnType<typeof setTimeout> | null = null;
         anchor.addEventListener('mouseenter', () => {
             if (timer !== null) clearTimeout(timer);
             timer = setTimeout(() => {
                 timer = null;
                 this.ui.show(anchor, data, this.settings.theme);
-            }, HOVER_DELAY_MS);
+            }, TOOLTIP_DELAY_MS);
         });
         anchor.addEventListener('mouseleave', () => {
             if (timer !== null) {
