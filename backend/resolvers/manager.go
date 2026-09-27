@@ -130,7 +130,7 @@ func (m *ResolverManager) resolveOne(ctx context.Context, raw string) *Result {
 			slog.Debug("resolver failed", "resolver", r.Name(), "host", u.Host, "err", scrubErr(err))
 			continue
 		}
-		if res != nil && res.Title != "" {
+		if res != nil && (res.Title != "" || res.FinalURL != "") {
 			return sanitizeResult(res)
 		}
 	}

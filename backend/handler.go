@@ -97,7 +97,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	details := make(map[string]*resolvers.Result)
 
 	for u, res := range h.manager.ResolveMulti(r.Context(), urls) {
-		results[u] = res.Title
+		if res.Title != "" {
+			results[u] = res.Title
+		}
 		details[u] = res
 	}
 

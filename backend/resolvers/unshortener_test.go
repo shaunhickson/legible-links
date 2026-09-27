@@ -181,11 +181,13 @@ func TestUnshortenerResolver(t *testing.T) {
 	t.Run("Redirect to non-HTML destination", func(t *testing.T) {
 		u, _ := url.Parse(ts.URL + "/to-json")
 		res, err := unshortener.Resolve(ctx, u)
-		if err == nil {
-			t.Fatalf("Expected an error for a non-HTML destination, got %+v", res)
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
 		}
-		if strings.Contains(err.Error(), "/json") {
-			t.Errorf("error must not contain the URL path: %v", err)
+		// The destination cannot be titled here, but where the link lands is
+		// still reported so the client can show or resolve it.
+		if res == nil || res.Title != "" || !strings.HasSuffix(res.FinalURL, "/json") {
+			t.Fatalf("Expected a title-less result carrying the final URL, got %+v", res)
 		}
 	})
 }

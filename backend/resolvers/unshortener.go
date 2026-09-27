@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -113,11 +114,15 @@ func (r *UnshortenerResolver) Resolve(ctx context.Context, u *url.URL) (*Result,
 	// Now that we have the final URL, let the manager resolve it through the
 	// remaining resolvers (OpenGraph), skipping ourselves to avoid recursion.
 	res, err := r.manager.resolveRecursively(ctx, finalURL, r.Name())
-	if err != nil {
-		return nil, err
+	if err != nil || res == nil {
+		// The destination could not be titled here (a platform page, a
+		// non-HTML file, a timeout). Still report where the link lands so
+		// the client can show the real host or resolve it itself.
+		if err != nil {
+			slog.Debug("unshortened destination not titled", "host", finalURL.Host, "err", scrubErr(err))
+		}
+		return &Result{FinalURL: finalURL.String()}, nil //nolint:nilerr // the final URL alone is a useful answer
 	}
-	if res != nil {
-		res.FinalURL = finalURL.String()
-	}
+	res.FinalURL = finalURL.String()
 	return res, nil
 }
