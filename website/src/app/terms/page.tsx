@@ -1,6 +1,9 @@
 import React from 'react';
 import { Eye, FileText } from 'lucide-react';
 import Link from 'next/link';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = { title: 'Terms', description: 'Terms for using the Legible Links extension and resolution service.' };
 
 export default function TermsOfService() {
   return (
