@@ -37,9 +37,21 @@ func TestUnshortenerResolver(t *testing.T) {
 		http.Redirect(w, r, "/loop1", http.StatusFound)
 	})
 
-	// 3. YouTube link
-	mux.HandleFunc("/to-yt", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", http.StatusFound)
+	// 3. Redirect (twice) to a page with OpenGraph metadata: the destination
+	// is resolved by the generic resolver and the full result comes back.
+	mux.HandleFunc("/to-og", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/to-og-2", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/to-og-2", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/og-page?ref=short", http.StatusFound)
+	})
+	mux.HandleFunc("/og-page", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<html><head>
+			<meta property="og:title" content="OpenGraph Destination">
+			<meta property="og:description" content="Found through two hops">
+			<title>Ignored Title</title>
+		</head></html>`))
 	})
 
 	// 4. Redirect to a non-web scheme
@@ -58,10 +70,13 @@ func TestUnshortenerResolver(t *testing.T) {
 		_, _ = w.Write([]byte("<html><head><title>Stayed Put</title></head></html>"))
 	})
 
-	// YouTube oEmbed stand-in
-	mux.HandleFunc("/oembed", func(w http.ResponseWriter, r *http.Request) {
+	// 6. Redirect to a page that is not HTML: nothing to show.
+	mux.HandleFunc("/to-json", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/json", http.StatusFound)
+	})
+	mux.HandleFunc("/json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"title":"Never Gonna Give You Up","author_name":"Rick Astley"}`))
+		_, _ = w.Write([]byte(`{"title":"not a page"}`))
 	})
 
 	ts := httptest.NewServer(mux)
@@ -75,13 +90,8 @@ func TestUnshortenerResolver(t *testing.T) {
 	u, _ := url.Parse(ts.URL)
 	unshortener.domains = []string{u.Host}
 
-	og := NewOpenGraphResolver()
-	yt := NewYouTubeResolver()
-	yt.oembedURL = ts.URL + "/oembed"
-
-	manager.Register(yt)
 	manager.Register(unshortener)
-	manager.Register(og)
+	manager.Register(NewOpenGraphResolver())
 
 	ctx := context.Background()
 
@@ -129,17 +139,23 @@ func TestUnshortenerResolver(t *testing.T) {
 		}
 	})
 
-	t.Run("Redirect to YouTube", func(t *testing.T) {
-		u, _ := url.Parse(ts.URL + "/to-yt")
+	t.Run("Redirect to OpenGraph page", func(t *testing.T) {
+		u, _ := url.Parse(ts.URL + "/to-og")
 		res, err := unshortener.Resolve(ctx, u)
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}
-		if res.Title != "Never Gonna Give You Up" {
-			t.Errorf("Expected YouTube oEmbed title, got '%s'", res.Title)
+		if res.Title != "OpenGraph Destination" {
+			t.Errorf("Expected og:title of the destination, got %q", res.Title)
 		}
-		if res.Platform != "YouTube" {
-			t.Errorf("Expected platform YouTube, got %q", res.Platform)
+		if res.Description != "Found through two hops" {
+			t.Errorf("Expected og:description of the destination, got %q", res.Description)
+		}
+		if res.Platform != "Generic" {
+			t.Errorf("Expected platform Generic, got %q", res.Platform)
+		}
+		if want := ts.URL + "/og-page?ref=short"; res.FinalURL != want {
+			t.Errorf("FinalURL = %q, want %q", res.FinalURL, want)
 		}
 	})
 
@@ -159,6 +175,17 @@ func TestUnshortenerResolver(t *testing.T) {
 		}
 		if res.Title != "Stayed Put" {
 			t.Errorf("Expected 'Stayed Put', got %q", res.Title)
+		}
+	})
+
+	t.Run("Redirect to non-HTML destination", func(t *testing.T) {
+		u, _ := url.Parse(ts.URL + "/to-json")
+		res, err := unshortener.Resolve(ctx, u)
+		if err == nil {
+			t.Fatalf("Expected an error for a non-HTML destination, got %+v", res)
+		}
+		if strings.Contains(err.Error(), "/json") {
+			t.Errorf("error must not contain the URL path: %v", err)
 		}
 	})
 }

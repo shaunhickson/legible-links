@@ -15,43 +15,67 @@ import (
 	"time"
 )
 
+// MockCache is an unbounded Cache without expiry. A nil value marks a
+// negative entry, exactly as the interface describes.
 type MockCache struct {
 	mu    sync.Mutex
-	store map[string]string
+	store map[string]*Result
 }
 
 func newMockCache() *MockCache {
-	return &MockCache{store: make(map[string]string)}
+	return &MockCache{store: make(map[string]*Result)}
 }
 
-func (m *MockCache) Get(key string) (string, bool) {
+func (m *MockCache) Get(key string) (*Result, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	val, ok := m.store[key]
-	return val, ok
+	res, ok := m.store[key]
+	return res.Clone(), ok
 }
 
-func (m *MockCache) Set(key string, title string) {
+func (m *MockCache) Set(key string, res *Result) {
+	if res == nil {
+		return
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.store[key] = title
+	m.store[key] = res.Clone()
 }
 
-func (m *MockCache) GetMulti(keys []string) map[string]string {
+func (m *MockCache) SetNegative(key string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	res := make(map[string]string)
+	if res, ok := m.store[key]; ok && res != nil {
+		return
+	}
+	m.store[key] = nil
+}
+
+func (m *MockCache) GetMulti(keys []string) map[string]*Result {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]*Result)
 	for _, k := range keys {
-		if val, ok := m.store[k]; ok {
-			res[k] = val
+		if res, ok := m.store[k]; ok {
+			out[k] = res.Clone()
 		}
 	}
-	return res
+	return out
 }
 
+// get returns the cached title for key, or "" when absent or negative.
 func (m *MockCache) get(key string) string {
-	v, _ := m.Get(key)
-	return v
+	res, _ := m.Get(key)
+	if res == nil {
+		return ""
+	}
+	return res.Title
+}
+
+// isNegative reports whether key holds a negative entry.
+func (m *MockCache) isNegative(key string) bool {
+	res, ok := m.Get(key)
+	return ok && res == nil
 }
 
 type MockResolver struct {
@@ -110,19 +134,57 @@ func TestResolverManager(t *testing.T) {
 }
 
 func TestResolverManager_CacheHitSkipsResolvers(t *testing.T) {
+	const u = "https://example.com/cached"
 	cache := newMockCache()
-	cache.Set("https://example.com/cached", "Cached Title")
+	cache.Set(u, &Result{Title: "Cached Title", Description: "Cached Desc", Platform: "Generic", FinalURL: "https://final.example/p"})
 	manager := NewResolverManager(cache)
 
 	r1 := &MockResolver{name: "r1", canHandle: true, title: "Fresh Title"}
 	manager.Register(r1)
 
-	results := manager.ResolveMulti(context.Background(), []string{"https://example.com/cached"})
-	if got := results["https://example.com/cached"].Title; got != "Cached Title" {
-		t.Errorf("got %q, want cached title", got)
+	results := manager.ResolveMulti(context.Background(), []string{u})
+	got := results[u]
+	if got == nil {
+		t.Fatal("expected a result from the cache")
+	}
+	// A hit must carry everything that was cached, not just the title.
+	want := Result{Title: "Cached Title", Description: "Cached Desc", Platform: "Generic", FinalURL: "https://final.example/p"}
+	if *got != want {
+		t.Errorf("cache hit = %+v, want %+v", *got, want)
 	}
 	if r1.calls.Load() != 0 {
 		t.Errorf("resolver was called %d times for a cached URL", r1.calls.Load())
+	}
+}
+
+func TestResolverManager_CachesFullResult(t *testing.T) {
+	const u = "https://example.com/full"
+	cache := newMockCache()
+	manager := NewResolverManager(cache)
+	r := &MockResolver{name: "r", canHandle: true, resolveFn: func(context.Context, *url.URL) (*Result, error) {
+		return &Result{Title: "Full", Description: "With description", Platform: "Generic", FinalURL: "https://final.example/"}, nil
+	}}
+	manager.Register(r)
+
+	want := Result{Title: "Full", Description: "With description", Platform: "Generic", FinalURL: "https://final.example/"}
+
+	first := manager.ResolveMulti(context.Background(), []string{u})
+	if first[u] == nil || *first[u] != want {
+		t.Fatalf("first resolution = %+v, want %+v", first[u], want)
+	}
+	if cached, ok := cache.Get(u); !ok || cached == nil || *cached != want {
+		t.Fatalf("cache holds %+v, want the full result %+v", cached, want)
+	}
+
+	// Mutating what the caller got back must not reach the cache, and the
+	// second call must be served from the cache with every field intact.
+	first[u].Title = "mutated"
+	second := manager.ResolveMulti(context.Background(), []string{u})
+	if second[u] == nil || *second[u] != want {
+		t.Errorf("second resolution = %+v, want %+v", second[u], want)
+	}
+	if r.calls.Load() != 1 {
+		t.Errorf("resolver called %d times, want 1", r.calls.Load())
 	}
 }
 
@@ -151,16 +213,74 @@ func TestResolverManager_FallsThroughOnErrorAndNil(t *testing.T) {
 }
 
 func TestResolverManager_AllFailReturnsNothing(t *testing.T) {
+	const u = "https://example.com/x"
 	cache := newMockCache()
 	manager := NewResolverManager(cache)
-	manager.Register(&MockResolver{name: "failing", canHandle: true, err: errors.New("boom")})
+	failing := &MockResolver{name: "failing", canHandle: true, err: errors.New("boom")}
+	manager.Register(failing)
 
-	results := manager.ResolveMulti(context.Background(), []string{"https://example.com/x"})
+	results := manager.ResolveMulti(context.Background(), []string{u})
 	if len(results) != 0 {
 		t.Errorf("expected no results, got %v", results)
 	}
-	if _, ok := cache.Get("https://example.com/x"); ok {
-		t.Error("failed resolutions must not be cached")
+	if !cache.isNegative(u) {
+		t.Error("a failed resolution must be recorded as a negative entry")
+	}
+	if cache.get(u) != "" {
+		t.Error("a failed resolution must never be cached as a result")
+	}
+
+	// The negative entry stops the next request from fetching again and
+	// still yields no result.
+	results = manager.ResolveMulti(context.Background(), []string{u})
+	if len(results) != 0 {
+		t.Errorf("negative entry produced a result: %v", results)
+	}
+	if failing.calls.Load() != 1 {
+		t.Errorf("resolver called %d times, want 1 (negative cache should absorb the retry)", failing.calls.Load())
+	}
+}
+
+func TestResolverManager_NegativeCacheSkipsResolvers(t *testing.T) {
+	const dead, live = "https://example.com/dead", "https://example.com/live"
+	cache := newMockCache()
+	cache.SetNegative(dead)
+	manager := NewResolverManager(cache)
+	r := &MockResolver{name: "r", canHandle: true, title: "Alive"}
+	manager.Register(r)
+
+	results := manager.ResolveMulti(context.Background(), []string{dead, live})
+	if _, ok := results[dead]; ok {
+		t.Error("a negatively cached URL must not appear in the results")
+	}
+	if results[live] == nil || results[live].Title != "Alive" {
+		t.Errorf("live URL = %+v, want Alive", results[live])
+	}
+	if r.calls.Load() != 1 {
+		t.Errorf("resolver called %d times, want 1 (only for the live URL)", r.calls.Load())
+	}
+}
+
+func TestResolverManager_TimeoutIsNotNegativelyCached(t *testing.T) {
+	cache := newMockCache()
+	manager := NewResolverManager(cache)
+	manager.SetTimeout(30 * time.Millisecond)
+	manager.SetMaxConcurrent(1)
+	manager.Register(&MockResolver{name: "slow", canHandle: true, resolveFn: func(ctx context.Context, u *url.URL) (*Result, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}})
+
+	// The first URL times out inside the resolver; the others never get a
+	// slot. None of them is evidence of a dead link.
+	urls := []string{"https://example.com/1", "https://example.com/2", "https://example.com/3"}
+	if results := manager.ResolveMulti(context.Background(), urls); len(results) != 0 {
+		t.Fatalf("expected no results, got %v", results)
+	}
+	for _, u := range urls {
+		if _, known := cache.Get(u); known {
+			t.Errorf("%s was cached after a timeout", u)
+		}
 	}
 }
 

@@ -16,11 +16,35 @@ type Result struct {
 	FinalURL string `json:"finalUrl,omitempty"`
 }
 
-// Cache defines the interface for storing and retrieving results
+// Clone returns an independent copy of r, or nil for a nil receiver.
+func (r *Result) Clone() *Result {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	return &cp
+}
+
+// Cache stores resolution results keyed by the requested URL.
+//
+// Besides results, a key can hold a negative entry: a record that resolving
+// it failed, kept for a shorter time so a page full of dead links does not
+// re-trigger fetches. Get reports a negative entry as (nil, true) and
+// GetMulti maps the key to nil; callers must treat both as "known to fail",
+// never as a result. A missing key is (nil, false), or absent from the map.
+//
+// Implementations must be safe for concurrent use and must copy results on
+// the way in and out, so the caller's pointer is never retained and a cached
+// value can never be mutated through a returned pointer.
 type Cache interface {
-	Get(key string) (string, bool)
-	Set(key string, title string)
-	GetMulti(keys []string) map[string]string
+	Get(key string) (*Result, bool)
+	// Set stores a copy of res. A nil res is ignored; failures are recorded
+	// with SetNegative.
+	Set(key string, res *Result)
+	// SetNegative records that key failed to resolve. It never replaces an
+	// unexpired result.
+	SetNegative(key string)
+	GetMulti(keys []string) map[string]*Result
 }
 
 // Resolver defines the interface for platform-specific URL resolution

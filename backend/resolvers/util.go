@@ -21,8 +21,6 @@ const UserAgent = "LegibleLinks/0.9 (+https://github.com/shaunhickson/legible-li
 const (
 	// MaxHTMLBytes is how much of an HTML document is scanned for metadata.
 	MaxHTMLBytes = 512 * 1024
-	// MaxJSONBytes bounds the size of any JSON API response we decode.
-	MaxJSONBytes = 256 * 1024
 	// MaxTitleRunes caps the length of a title returned to clients.
 	MaxTitleRunes = 300
 	// MaxDescriptionRunes caps the length of a description returned to clients.
@@ -38,11 +36,6 @@ func SafeHttpClient(timeout time.Duration) *http.Client {
 		Transport: transport.NewSafeTransport(),
 		Timeout:   timeout,
 	}
-}
-
-// LimitJSON bounds a JSON response body before decoding.
-func LimitJSON(r io.Reader) io.Reader {
-	return io.LimitReader(r, MaxJSONBytes)
 }
 
 // IsHTMLContentType reports whether a Content-Type header value describes an
