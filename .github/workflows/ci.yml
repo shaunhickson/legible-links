@@ -141,6 +141,8 @@ jobs:
           service: ${{ env.SERVICE }}
           region: ${{ env.REGION }}
           image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.ARTIFACT_REPO }}/${{ env.SERVICE }}:${{ github.sha }}
+          # Spend cap and abuse limits; keep in sync with docs/SELF_HOSTING.md.
+          flags: --max-instances=3 --concurrency=80 --memory=256Mi --timeout=15
 
       - name: Show Output
         run: echo ${{ steps.deploy.outputs.url }}
