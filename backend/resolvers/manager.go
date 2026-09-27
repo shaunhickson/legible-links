@@ -148,13 +148,17 @@ func (m *ResolverManager) ResolveMulti(ctx context.Context, urls []string) map[s
 	results := make(map[string]*Result)
 	var missingURLs []string
 
-	// 1. Check Cache (the cache stores title strings only)
+	// 1. Check the cache. A hit carries the full result. A negative entry
+	// (key present, nil value) records a recent failure: the URL is neither
+	// resolved again nor reported.
 	cached := m.cache.GetMulti(urls)
 	for _, u := range urls {
-		if val, ok := cached[u]; ok {
-			results[u] = &Result{Title: val}
-		} else {
+		res, known := cached[u]
+		switch {
+		case !known:
 			missingURLs = append(missingURLs, u)
+		case res != nil:
+			results[u] = res
 		}
 	}
 
@@ -187,12 +191,17 @@ func (m *ResolverManager) ResolveMulti(ctx context.Context, urls []string) map[s
 
 			res := m.resolveOne(ctx, raw)
 			if res == nil {
+				// Remember the failure unless we simply ran out of time: a
+				// deadline is not evidence that the link is dead.
+				if ctx.Err() == nil {
+					m.cache.SetNegative(raw)
+				}
 				return
 			}
 			mu.Lock()
 			results[raw] = res
 			mu.Unlock()
-			m.cache.Set(raw, res.Title)
+			m.cache.Set(raw, res)
 		}(rawURL)
 	}
 

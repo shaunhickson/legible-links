@@ -36,6 +36,21 @@ func getEnvInt(key string, defaultVal int) int {
 	return defaultVal
 }
 
+// getEnvDuration reads a Go duration string ("10m", "90s") from the
+// environment, falling back to defaultVal when unset or unparseable.
+func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
+	valStr := os.Getenv(key)
+	if valStr == "" {
+		return defaultVal
+	}
+	val, err := time.ParseDuration(valStr)
+	if err != nil {
+		slog.Warn("Ignoring unparseable duration", "key", key, "default", defaultVal.String())
+		return defaultVal
+	}
+	return val
+}
+
 func main() {
 	// Initialize Structured Logger
 	logger.Init()
@@ -72,9 +87,13 @@ func run() error {
 	// Clean up old visitors every minute, expire after 3 minutes
 	rateLimiter.CleanupBackground(ctx, 1*time.Minute, 3*time.Minute)
 
-	// Initialize Cache (bounded, in-memory, non-persistent)
-	slog.Info("Initializing in-memory cache", "max_entries", DefaultCacheMaxEntries, "ttl", DefaultCacheTTL.String())
+	// Initialize Cache (bounded, in-memory, non-persistent). Failed
+	// resolutions are remembered for NEGATIVE_CACHE_TTL (0 disables that).
+	negativeTTL := getEnvDuration("NEGATIVE_CACHE_TTL", DefaultNegativeCacheTTL)
+	slog.Info("Initializing in-memory cache",
+		"max_entries", DefaultCacheMaxEntries, "ttl", DefaultCacheTTL.String(), "negative_ttl", negativeTTL.String())
 	cache := NewInMemoryCache(DefaultCacheMaxEntries, DefaultCacheTTL)
+	cache.SetNegativeTTL(negativeTTL)
 
 	// Initialize Resolver Manager
 	manager := resolvers.NewResolverManager(cache)
@@ -134,8 +153,10 @@ func run() error {
 	}
 }
 
-// registerResolvers wires up every resolver, honouring ENABLED_RESOLVERS
-// (comma-separated names) when set. None of them needs an API key.
+// registerResolvers wires up the resolvers, honouring ENABLED_RESOLVERS
+// (comma-separated names: "unshortener", "opengraph") when set. Neither
+// needs an API key. Platform-specific links are resolved by the extension
+// itself and never reach this service.
 func registerResolvers(manager *resolvers.ResolverManager) {
 	enabledResolvers := os.Getenv("ENABLED_RESOLVERS")
 	isEnabled := func(name string) bool {
@@ -150,18 +171,8 @@ func registerResolvers(manager *resolvers.ResolverManager) {
 		return false
 	}
 
-	if isEnabled("youtube") {
-		manager.Register(resolvers.NewYouTubeResolver())
-	}
 	if isEnabled("unshortener") {
 		manager.Register(resolvers.NewUnshortenerResolver(manager))
-	}
-	if isEnabled("github") {
-		// GITHUB_TOKEN is optional; it only raises the API rate limit.
-		manager.Register(resolvers.NewGitHubResolver(os.Getenv("GITHUB_TOKEN")))
-	}
-	if isEnabled("wikipedia") {
-		manager.Register(resolvers.NewWikipediaResolver())
 	}
 	// OpenGraph is the generic fallback and must be registered last.
 	if isEnabled("opengraph") {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -252,4 +253,86 @@ func TestIsValidResolveURL(t *testing.T) {
 			t.Errorf("isValidResolveURL(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
+}
+
+// TestHandler_CacheHitKeepsDetails: the second request for a URL is served
+// from the cache and still carries description, platform and finalUrl, so
+// the extension renders exactly the same thing whether or not it was cached.
+func TestHandler_CacheHitKeepsDetails(t *testing.T) {
+	cache := NewInMemoryCache(100, time.Hour)
+	manager := resolvers.NewResolverManager(cache)
+	full := &fullResolver{}
+	manager.Register(full)
+	h := NewHandler(manager)
+
+	const body = `{"urls": ["https://example.com/a"]}`
+	want := resolvers.Result{Title: "Full Title", Description: "Full Description", Platform: "Generic", FinalURL: "https://final.example/a"}
+
+	for i, label := range []string{"fresh", "cached"} {
+		w := post(h, body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: Expected 200, got %d", label, w.Code)
+		}
+		var resp ResolveResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("%s: decode: %v", label, err)
+		}
+		got := resp.Details["https://example.com/a"]
+		if got == nil || *got != want {
+			t.Errorf("%s: details = %+v, want %+v", label, got, want)
+		}
+		if resp.Titles["https://example.com/a"] != want.Title {
+			t.Errorf("%s: titles = %v", label, resp.Titles)
+		}
+		if n := full.calls.Load(); n != 1 {
+			t.Errorf("%s (request %d): resolver called %d times, want 1", label, i+1, n)
+		}
+	}
+}
+
+// TestHandler_NegativeCacheAbsorbsRetries: a URL that failed is not fetched
+// again while its negative entry lives, and never appears in the response.
+func TestHandler_NegativeCacheAbsorbsRetries(t *testing.T) {
+	cache := NewInMemoryCache(100, time.Hour)
+	manager := resolvers.NewResolverManager(cache)
+	failing := &failingResolver{}
+	manager.Register(failing)
+	h := NewHandler(manager)
+
+	for _, label := range []string{"first", "retry"} {
+		w := post(h, `{"urls": ["https://example.com/dead"]}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: Expected 200, got %d", label, w.Code)
+		}
+		if titles := decodeTitles(t, w); len(titles) != 0 {
+			t.Errorf("%s: expected no titles, got %v", label, titles)
+		}
+		if n := failing.calls.Load(); n != 1 {
+			t.Errorf("%s: resolver called %d times, want 1", label, n)
+		}
+	}
+}
+
+// fullResolver returns a result with every field populated and counts calls.
+type fullResolver struct {
+	calls atomic.Int32
+}
+
+func (f *fullResolver) Name() string            { return "full" }
+func (f *fullResolver) CanHandle(*url.URL) bool { return true }
+func (f *fullResolver) Resolve(_ context.Context, u *url.URL) (*resolvers.Result, error) {
+	f.calls.Add(1)
+	return &resolvers.Result{Title: "Full Title", Description: "Full Description", Platform: "Generic", FinalURL: "https://final.example" + u.Path}, nil
+}
+
+// failingResolver always fails and counts calls.
+type failingResolver struct {
+	calls atomic.Int32
+}
+
+func (f *failingResolver) Name() string            { return "failing" }
+func (f *failingResolver) CanHandle(*url.URL) bool { return true }
+func (f *failingResolver) Resolve(context.Context, *url.URL) (*resolvers.Result, error) {
+	f.calls.Add(1)
+	return nil, errors.New("upstream unavailable")
 }

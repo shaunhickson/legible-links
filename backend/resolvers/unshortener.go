@@ -110,7 +110,14 @@ func (r *UnshortenerResolver) Resolve(ctx context.Context, u *url.URL) (*Result,
 		return nil, ErrUnsupportedScheme
 	}
 
-	// Now that we have the final URL, let the manager resolve it properly
-	// (YouTube, OpenGraph, ...), skipping ourselves to avoid recursion.
-	return r.manager.resolveRecursively(ctx, finalURL, r.Name())
+	// Now that we have the final URL, let the manager resolve it through the
+	// remaining resolvers (OpenGraph), skipping ourselves to avoid recursion.
+	res, err := r.manager.resolveRecursively(ctx, finalURL, r.Name())
+	if err != nil {
+		return nil, err
+	}
+	if res != nil {
+		res.FinalURL = finalURL.String()
+	}
+	return res, nil
 }

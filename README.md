@@ -24,13 +24,13 @@ Tiers 0 and A, hover mode, and the onboarding choice between Private, Balanced, 
 
 - The extension requests only `storage` plus the ability to read link text on web pages. Nothing is collected, and there is no telemetry.
 - Titles are inserted as text, never as HTML, and are stripped of control and bidi-override characters and length-capped.
-- The backend keeps no database and no API keys, logs neither URLs nor client IPs, and fetches only public hosts on ports 80 and 443 through an SSRF-hardened transport. It is rate limited per client and globally.
+- The backend keeps no database and no API keys, logs neither URLs nor client IPs, and fetches only public hosts on ports 80 and 443 through an SSRF-hardened transport. It is rate limited per client and globally. Its only resolvers are a shortener-follower and a generic OpenGraph/`<title>` extractor; results are cached in memory for 24 hours and failures for 10 minutes.
 - If the backend is unreachable, links simply stay as they are.
 
 ## Repository layout
 
 - `extension/` — the browser extension (Vite, React, TypeScript). Content script in `src/content/optimizer.ts`, rendering in `src/utils/render.ts`, URL guards in `src/utils/sensitive.ts`.
-- `backend/` — the Go resolution service: `POST /resolve` (JSON `{"urls": [...]}` → `{"titles": {...}, "details": {...}}`) and `GET /health`.
+- `backend/` — the Go resolution service: `POST /resolve` (JSON `{"urls": [...]}` → `{"titles": {...}, "details": {...}}`) and `GET /health`. Two resolvers, `unshortener` and `opengraph`, in `resolvers/`; the SSRF-hardened transport in `transport/`. See [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
 - `website/` — marketing site with the privacy policy and terms (Next.js).
 - `docs/` — plan and roadmap.
 
@@ -58,14 +58,16 @@ cd extension && npm run lint && npx vitest run && npm run test:e2e
 cd backend && go vet ./... && golangci-lint run ./... && go test -race -cover ./...
 ```
 
-Backend configuration is entirely optional environment variables: `PORT` (8080), `RATE_LIMIT_RPM` (60), `RATE_LIMIT_BURST` (20), `GLOBAL_RATE_LIMIT_RPS` (50), `GLOBAL_RATE_LIMIT_BURST` (100), `MAX_CONCURRENT_RESOLVES` (16), `TRUSTED_PROXY_HOPS` (0; set to 1 behind Cloud Run), `RESOLVER_TIMEOUT_MS` (2000), `MAX_ITEMS_PER_REQUEST` (50), `MAX_BODY_BYTES` (10240), `ENABLED_RESOLVERS` (all).
+Backend configuration is entirely optional environment variables: `PORT` (8080), `RATE_LIMIT_RPM` (60), `RATE_LIMIT_BURST` (20), `GLOBAL_RATE_LIMIT_RPS` (50), `GLOBAL_RATE_LIMIT_BURST` (100), `MAX_CONCURRENT_RESOLVES` (16), `TRUSTED_PROXY_HOPS` (0; set to 1 behind Cloud Run), `RESOLVER_TIMEOUT_MS` (2000), `MAX_ITEMS_PER_REQUEST` (50), `MAX_BODY_BYTES` (10240), `ENABLED_RESOLVERS` (`unshortener,opengraph`), `NEGATIVE_CACHE_TTL` (10m), `DEBUG` (unset). Each is explained in [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
 
 ## Self-hosting the backend
 
+The backend resolves only what the extension cannot resolve itself: shortened links (`unshortener`) and generic pages (`opengraph`). It is stateless and keyless, so running your own is one image:
+
 ```bash
-cd backend && docker build -t legible-links-backend . && docker run -p 8080:8080 legible-links-backend
+cd backend && docker build -t legible-links-backend . && docker run --rm -p 8080:8080 legible-links-backend
 ```
-Then point the extension's API URL at `https://your-host/resolve`. A published container image and a fuller guide arrive with milestone M2.
+Then point the extension's API URL at `https://your-host/resolve` (`http://` only for localhost). [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) covers every setting, the `/resolve` wire format, running behind a reverse proxy, and deploying to Cloud Run in your own project with three `gcloud` commands.
 
 ## Contributing
 
