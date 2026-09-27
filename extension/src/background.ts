@@ -37,3 +37,10 @@ const router = createRouter({
 });
 
 chrome.runtime.onMessage.addListener(createMessageHandler(router, chrome.runtime.id));
+
+// First install only: open the onboarding page so the privacy mode is a choice, not a default.
+// Compared as a string so the same code runs where the OnInstalledReason enum object is absent.
+chrome.runtime.onInstalled.addListener((details) => {
+    if (String(details.reason) !== 'install') return;
+    chrome.tabs.create({ url: chrome.runtime.getURL('onboarding.html') });
+});

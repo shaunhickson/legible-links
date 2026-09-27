@@ -72,6 +72,9 @@ jobs:
       - name: Build Extension for E2E
         run: cd extension && npm run build
 
+      - name: Lint Extension Manifest (web-ext)
+        run: cd extension && npm run lint:ext
+
       - name: Install Playwright Browsers
         run: cd extension && npx playwright install --with-deps chromium
 

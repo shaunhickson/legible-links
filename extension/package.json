@@ -1,7 +1,7 @@
 {
   "name": "legible-links-extension",
   "private": true,
-  "version": "0.10.0",
+  "version": "0.11.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:e2e": "playwright test",
-    "lint": "eslint src --report-unused-disable-directives --max-warnings 0"
+    "lint": "eslint src --report-unused-disable-directives --max-warnings 0",
+    "lint:ext": "web-ext lint --source-dir dist"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -35,6 +36,7 @@
     "typescript": "^5.0.2",
     "typescript-eslint": "^8.56.0",
     "vite": "^4.3.9",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "web-ext": "^10.7.0"
   }
 }

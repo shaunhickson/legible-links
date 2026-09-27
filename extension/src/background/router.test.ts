@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import youtubeFixture from '../resolvers/__fixtures__/youtube.json';
+import youtubePlaylistFixture from '../resolvers/__fixtures__/youtube-playlist.json';
 import vimeoFixture from '../resolvers/__fixtures__/vimeo.json';
 import { FetchFn } from '../resolvers/types';
 import { createCache, ResolutionCache } from '../utils/cache';
@@ -14,6 +15,17 @@ const PAGE = 'news.example.org';
 const YT = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 const ARTICLE = 'https://example.org/blog/2026/post';
 const WIKI = 'https://en.wikipedia.org/wiki/Alan_Turing';
+const PLAYLIST = 'https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab';
+const BACKEND_HOST = new URL(DEFAULT_SETTINGS.apiUrl).host;
+const RICK = 'Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)';
+
+/** A backend that answers every URL with only where it lands, never a title. */
+function destinationOnly(finalUrl: string): Reply {
+    return (_url, init) => {
+        const { urls } = JSON.parse(String(init?.body)) as { urls: string[] };
+        return json({ titles: {}, details: Object.fromEntries(urls.map((u) => [u, { finalUrl }])) });
+    };
+}
 
 function json(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -29,7 +41,7 @@ function network(handlers: Record<string, Reply> = {}) {
         return json({ titles: Object.fromEntries(urls.map((u) => [u, `Title for ${u}`])) });
     };
     const defaults: Record<string, Reply> = {
-        'www.youtube.com': () => json(youtubeFixture),
+        'www.youtube.com': (url) => json(new URL(url).searchParams.get('url')?.includes('/playlist?') ? youtubePlaylistFixture : youtubeFixture),
         'vimeo.com': () => json(vimeoFixture),
         [new URL(DEFAULT_SETTINGS.apiUrl).host]: (_url, init) => backendTitles(init),
     };
@@ -179,6 +191,22 @@ describe('router: Tier A', () => {
         const outcome = (await router.resolve([YT], 'auto', PAGE))[YT];
         expect(outcome).toMatchObject({ title: 'gpj.exe', description: 'Desc here' });
         expect(cache.get(YT)).toMatchObject({ kind: 'hit', value: { title: 'gpj.exe', description: 'Desc here' } });
+    });
+
+    it('a YouTube playlist is asked of YouTube in Balanced, and waits for hover in Private', async () => {
+        const balanced = make(MODE_PRESETS.balanced);
+        expect((await balanced.router.resolve([PLAYLIST], 'auto', PAGE))[PLAYLIST]).toEqual({
+            status: 'resolved', title: 'Essence of linear algebra', description: '3Blue1Brown', platform: 'youtube', source: 'platform',
+        });
+        expect(balanced.net.calls.map((c) => c.url)).toEqual([
+            'https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fplaylist%3Flist%3DPLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab&format=json',
+        ]);
+
+        const priv = make(MODE_PRESETS.private);
+        expect((await priv.router.resolve([PLAYLIST], 'auto', PAGE))[PLAYLIST]).toEqual({ status: 'hover' });
+        expect(priv.net.calls).toHaveLength(0);
+        expect((await priv.router.resolve([PLAYLIST], 'hover', PAGE))[PLAYLIST]).toMatchObject({ status: 'resolved', title: 'Essence of linear algebra' });
+        expect(priv.net.hosts()).toEqual(['www.youtube.com']);
     });
 
     it('limits in-flight platform requests to 4 per host and 8 overall', async () => {
@@ -346,6 +374,58 @@ describe('router: Tier B', () => {
         release();
         expect((await pending)[ARTICLE]).toMatchObject({ title: 'From L2', source: 'cache' });
         expect(net.calls).toHaveLength(0);
+    });
+});
+
+describe('router: shortened links whose destination the backend could not title', () => {
+    const SHORT = 'https://bit.ly/3abc';
+
+    it('Balanced on hover, landing on YouTube: one POST, then one oEmbed call, rendered under the original key with finalUrl', async () => {
+        const { router, net, cache } = make(MODE_PRESETS.balanced, { [BACKEND_HOST]: destinationOnly(YT) });
+        const results = await router.resolve([SHORT], 'hover', PAGE);
+        expect(results[SHORT]).toEqual({ status: 'resolved', title: RICK, description: 'Rick Astley', platform: 'youtube', source: 'backend', finalUrl: YT });
+        expect(net.hosts()).toEqual([BACKEND_HOST, 'www.youtube.com']);
+        expect(net.posted()).toEqual([[SHORT]]);
+        expect(cache.get(SHORT)).toMatchObject({ kind: 'hit', value: { title: RICK, finalUrl: YT, source: 'backend' } });
+        // The next look-up is served from the cache: no further network.
+        expect((await router.resolve([SHORT], 'auto', PAGE))[SHORT]).toMatchObject({ source: 'cache', finalUrl: YT });
+        expect(net.calls).toHaveLength(2);
+    });
+
+    it('landing on Wikipedia: one POST and nothing else; the title comes from the destination URL', async () => {
+        const { router, net } = make(MODE_PRESETS.balanced, { [BACKEND_HOST]: destinationOnly(WIKI) });
+        const results = await router.resolve([SHORT], 'hover', PAGE);
+        expect(results[SHORT]).toEqual({ status: 'resolved', title: 'Alan Turing', description: 'en.wikipedia.org', platform: 'wikipedia', source: 'backend', finalUrl: WIKI });
+        expect(net.hosts()).toEqual([BACKEND_HOST]);
+    });
+
+    it('landing on a page nobody can title: none, with no negative entry on the original key', async () => {
+        const { router, net, cache } = make(MODE_PRESETS.balanced, { [BACKEND_HOST]: destinationOnly('https://example.org/landing') });
+        expect((await router.resolve([SHORT], 'hover', PAGE))[SHORT]).toEqual({ status: 'none' });
+        expect(net.hosts()).toEqual([BACKEND_HOST]);
+        expect(cache.get(SHORT)).toBeUndefined();
+    });
+
+    it('landing on a platform when platform look-ups are hover-only and the trigger was automatic: hover, no oEmbed call', async () => {
+        const { router, net } = make({ platformMode: 'hover', genericMode: 'auto' }, { [BACKEND_HOST]: destinationOnly(YT) });
+        expect((await router.resolve([SHORT], 'auto', PAGE))[SHORT]).toEqual({ status: 'hover' });
+        expect(net.hosts()).toEqual([BACKEND_HOST]);
+        expect((await router.resolve([SHORT], 'hover', PAGE))[SHORT]).toMatchObject({ status: 'resolved', source: 'backend', finalUrl: YT });
+        expect(net.hosts()).toEqual([BACKEND_HOST, BACKEND_HOST, 'www.youtube.com']);
+    });
+
+    it('a destination the sensitive-URL guard skips is never contacted', async () => {
+        const { router, net, cache } = make(MODE_PRESETS.balanced, { [BACKEND_HOST]: destinationOnly('https://www.youtube.com/watch?v=dQw4w9WgXcQ&token=abc') });
+        expect((await router.resolve([SHORT], 'hover', PAGE))[SHORT]).toEqual({ status: 'none' });
+        expect(net.hosts()).toEqual([BACKEND_HOST]);
+        expect(cache.get(SHORT)).toBeUndefined();
+    });
+
+    it('a platform 404 for the destination is remembered like any other platform miss', async () => {
+        const { router, net, cache } = make(MODE_PRESETS.balanced, { [BACKEND_HOST]: destinationOnly(YT), 'www.youtube.com': () => json({}, 404) });
+        expect((await router.resolve([SHORT], 'hover', PAGE))[SHORT]).toEqual({ status: 'none' });
+        expect(net.hosts()).toEqual([BACKEND_HOST, 'www.youtube.com']);
+        expect(cache.get(SHORT)).toEqual({ kind: 'negative' });
     });
 });
 

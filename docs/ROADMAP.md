@@ -11,19 +11,23 @@ Safe to sideload and share with friends.
 - [x] Backend: no URLs or IPs in logs, rate limiter keyed on the trusted proxy hop, SSRF blocklist and port allowlist, server timeouts, bounded cache, HTML tokenizer, keyless YouTube, secret-dependent resolvers removed, tests
 - [x] Merged, deployed; `YOUTUBE_API_KEY` removed from the live service and Secret Manager, API key revoked
 
-## M1 — Privacy architecture (in progress)
+## M1 — Privacy architecture (done 2026-09-27, PRs #108, #109 and this one)
 The default install never contacts the server without a hover.
-- Service worker owns all network; content script only messages it
-- Tier 0 (URL-derived titles, no network), Tier A (platform oEmbed, cookies omitted), Tier B (backend, on hover by default)
-- Sensitive-URL filter completed (tracking params, high-entropy segments, sensitive page hosts)
-- Session cache, onboarding page with Private / Balanced / Everything, Firefox manifest keys
-- Backend slimmed to OpenGraph + unshortener, LRU cache, GHCR image for self-hosting
+- [x] Service worker owns all network; content script only messages it
+- [x] Tier 0 (URL-derived titles, no network), Tier A (platform oEmbed, cookies omitted), Tier B (backend, on hover by default)
+- [x] Sensitive-URL filter completed (tracking params, high-entropy segments, sensitive page hosts)
+- [x] Session cache, onboarding page with Private / Balanced / Everything, Firefox manifest keys
+- [x] Backend slimmed to OpenGraph + unshortener, LRU cache, GHCR image for self-hosting
+- [x] YouTube playlists via oEmbed; shortened links landing on platform pages finished locally from the backend's `finalUrl`
 
-## M2 — Ship
+## M2 — Ship (in progress)
 Listed on Chrome Web Store and Firefox Add-ons.
-- Register `legiblelinks.app`; site on GitHub Pages; `api.legiblelinks.app` in front of Cloud Run
-- Privacy policy rewritten to match behaviour; store assets; tag-triggered release build
-- Cloud Run capped at 3 instances, request-log exclusion, budget alert
+- [x] Site on GitHub Pages (PR #107)
+- [x] Privacy policy rewritten to match behaviour (PR #107)
+- [x] Tag-triggered release workflow: extension zip, source zip, GHCR image, GitHub Release (PR #107)
+- [x] Cloud Run capped at 3 instances, request-log exclusion, budget alert (PR #107)
+- [ ] Register `legiblelinks.app`; `api.legiblelinks.app` in front of Cloud Run
+- [ ] Store assets; Chrome Web Store and Firefox Add-ons listings
 
 ## M3 — After launch
 Feedback channel, self-hosting guide, then only what users ask for.

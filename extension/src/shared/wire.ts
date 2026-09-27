@@ -20,6 +20,24 @@ function optionalString(value: unknown): string | undefined {
     return typeof value === 'string' ? value : undefined;
 }
 
+const MAX_FINAL_URL_LENGTH = 2048;
+
+/**
+ * A `finalUrl` the extension will display or resolve further: http(s), no
+ * credentials, bounded length. Anything else is treated as absent.
+ */
+export function validFinalUrl(value: string | undefined): string | undefined {
+    if (!value || value.length > MAX_FINAL_URL_LENGTH) return undefined;
+    let u: URL;
+    try {
+        u = new URL(value);
+    } catch {
+        return undefined;
+    }
+    if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password) return undefined;
+    return u.href;
+}
+
 /**
  * Validates the backend response shape: `titles` must be an object of string -> string.
  * Anything else is treated as a failed request.
