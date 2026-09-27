@@ -17,6 +17,7 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'popup.html'),
         options: resolve(__dirname, 'options.html'),
+        onboarding: resolve(__dirname, 'onboarding.html'),
       },
       output: {
         entryFileNames: 'assets/[name].js',

@@ -8,7 +8,7 @@ Legible Links is a browser extension that finds links whose visible text is just
 
 The real URL is never hidden: it stays in the link's `href`, in the native tooltip, and in the rich tooltip. Links inside editors, links to private or internal hosts, and links that look like password resets, magic logins, unsubscribes, or invites are left alone and never leave your browser.
 
-**Status: pre-release (0.9.0).** Not yet on any store. Formerly "LinkLens". The current milestone plan is in [`docs/ROADMAP.md`](docs/ROADMAP.md); the full assessment and design is [`docs/PLAN_2026-09.md`](docs/PLAN_2026-09.md).
+**Status: pre-release (0.11.0).** Not yet on any store; loads unpacked in Chrome and temporarily in Firefox (below). Formerly "LinkLens". The current milestone plan is in [`docs/ROADMAP.md`](docs/ROADMAP.md); the full assessment and design is [`docs/PLAN_2026-09.md`](docs/PLAN_2026-09.md).
 
 ## How resolution works
 
@@ -18,7 +18,13 @@ The real URL is never hidden: it stays in the link's `href`, in the native toolt
 | A | YouTube, Spotify, X, Reddit, Vimeo | In the browser, via each platform's public oEmbed endpoint, cookies omitted | automatic |
 | B | Everything else, and shortened links | The backend service (shared instance or your own) | on hover |
 
-Tiers 0 and A, hover mode, and the onboarding choice between Private, Balanced, and Everything ship in milestone M1. Until then the extension sends qualifying links to the backend automatically, with the guards above.
+All network happens in the extension's service worker; the content script only asks it for titles. Tier 0 always runs, with no network. On first install an onboarding page asks you to choose a privacy mode, which you can change at any time in the options page:
+
+- **Private**: nothing leaves your browser until you hover a link; hovering a YouTube, Spotify, X, Reddit or Vimeo link asks that platform directly, and the Legible Links server is never contacted.
+- **Balanced** (recommended): platform links are looked up automatically by asking that platform directly; any other link is sent to the Legible Links server only while you hover it.
+- **Everything**: platform links are looked up by the platform, and every other public link is sent to the Legible Links server automatically, except on webmail, chat and document sites, where it waits for a hover.
+
+Shortened links are followed by the server, which reports where they land; when the destination is a platform page the extension finishes the look-up itself, so the link reads `Title · youtube.com via bit.ly`. Which hosts each mode may contact, and how often, is pinned down row by row in `extension/src/privacy-contract.test.ts`. You can point the extension at your own server instead of the shared one: see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
 
 ## Privacy and security posture
 
@@ -50,7 +56,7 @@ cd extension
 npm install
 npm run build       # writes dist/
 ```
-Load `extension/dist` as an unpacked extension (Chrome: chrome://extensions → Developer mode → Load unpacked). To use a local backend, set the API URL in the options page to `http://localhost:8080/resolve`.
+Load `extension/dist` as an unpacked extension (Chrome: chrome://extensions → Developer mode → Load unpacked). In Firefox (142 or later), open `about:debugging#/runtime/this-firefox` → Load Temporary Add-on… and pick `extension/dist/manifest.json`; the add-on lasts until Firefox restarts, until the listing on Firefox Add-ons exists. `npm run lint:ext` runs Mozilla's `web-ext lint` over the build. To use a local backend, set the API URL in the options page to `http://localhost:8080/resolve`.
 
 Useful commands (also wrapped by the `Makefile`):
 ```bash

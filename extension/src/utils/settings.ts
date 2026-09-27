@@ -46,6 +46,16 @@ export const MODE_LABELS: Record<ModeName, string> = {
     custom: 'Custom',
 };
 
+/** One sentence per preset: exactly what leaves the browser, and to whom. Shared by the options and onboarding pages. */
+export const MODE_DESCRIPTIONS: Record<Exclude<ModeName, 'custom'>, string> = {
+    private: 'Nothing leaves your browser until you hover a link; hovering a YouTube, Spotify, X, Reddit or Vimeo link asks that platform directly, and the Legible Links server is never contacted.',
+    balanced: 'YouTube, Spotify, X, Reddit and Vimeo links are looked up automatically by asking that platform directly; any other link is sent to the Legible Links server only while you hover it.',
+    everything: 'Platform links are looked up by the platform, and every other public link is sent to the Legible Links server automatically, except on webmail, chat and document sites, where it waits for a hover.',
+};
+
+/** The presets in display order. */
+export const PRESET_ORDER: Exclude<ModeName, 'custom'>[] = ['private', 'balanced', 'everything'];
+
 export function modeName(settings: ModePreset): ModeName {
     for (const [name, preset] of Object.entries(MODE_PRESETS) as [Exclude<ModeName, 'custom'>, ModePreset][]) {
         if (preset.platformMode === settings.platformMode && preset.genericMode === settings.genericMode) return name;

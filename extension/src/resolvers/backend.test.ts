@@ -23,7 +23,7 @@ describe('resolveViaBackend', () => {
         expect(init).toMatchObject({ method: 'POST', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' });
         expect((init?.headers as Record<string, string>)['Content-Type']).toBe('application/json');
         expect(init?.signal === undefined || init?.signal instanceof AbortSignal).toBe(true);
-        expect(out.resolved.get('https://a.example/')).toEqual({ title: 'Title for https://a.example/', description: undefined, platform: 'generic', finalUrl: undefined });
+        expect(out.answered.get('https://a.example/')).toEqual({ title: 'Title for https://a.example/', description: undefined, platform: 'generic', finalUrl: undefined });
         expect(out.failed.size).toBe(0);
     });
 
@@ -35,7 +35,7 @@ describe('resolveViaBackend', () => {
         });
         const out = await resolveViaBackend(urls, { apiUrl: API_URL, fetchFn });
         expect(sentUrls(fetchFn).map((c) => c.length)).toEqual([BACKEND_CHUNK_SIZE, BACKEND_CHUNK_SIZE, 10]);
-        expect(out.resolved.size).toBe(60);
+        expect(out.answered.size).toBe(60);
     });
 
     it('passes platform, description and finalUrl through from details', async () => {
@@ -44,14 +44,40 @@ describe('resolveViaBackend', () => {
             details: { 'https://bit.ly/x': { platform: 'Generic', description: 'D', finalUrl: 'https://example.org/landing' } },
         }));
         const out = await resolveViaBackend(['https://bit.ly/x'], { apiUrl: API_URL, fetchFn });
-        expect(out.resolved.get('https://bit.ly/x')).toEqual({ title: 'Landing', description: 'D', platform: 'Generic', finalUrl: 'https://example.org/landing' });
+        expect(out.answered.get('https://bit.ly/x')).toEqual({ title: 'Landing', description: 'D', platform: 'Generic', finalUrl: 'https://example.org/landing' });
     });
 
     it('distinguishes "no title" from a failed request', async () => {
         const fetchFn = vi.fn(async () => json({ titles: { 'https://a.example/': 'A' } }));
         const out = await resolveViaBackend(['https://a.example/', 'https://b.example/'], { apiUrl: API_URL, fetchFn });
-        expect(out.resolved.has('https://b.example/')).toBe(false);
+        expect(out.answered.has('https://b.example/')).toBe(false);
         expect(out.failed.has('https://b.example/')).toBe(false);
+    });
+
+    it('surfaces a destination without a title as { finalUrl }, neither dropped nor failed', async () => {
+        const fetchFn = vi.fn(async () => json({
+            titles: {},
+            details: { 'https://bit.ly/yt': { finalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } },
+        }));
+        const out = await resolveViaBackend(['https://bit.ly/yt'], { apiUrl: API_URL, fetchFn });
+        expect(out.answered.get('https://bit.ly/yt')).toEqual({ finalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' });
+        expect(out.failed.size).toBe(0);
+    });
+
+    it('drops finalUrl values that are not plain http(s), for titled and untitled answers alike', async () => {
+        const fetchFn = vi.fn(async () => json({
+            titles: { 'https://bit.ly/titled': 'Odd' },
+            details: {
+                'https://bit.ly/titled': { platform: 'Generic', finalUrl: 'javascript:alert(1)' },
+                'https://bit.ly/untitled': { finalUrl: 'ftp://example.org/x' },
+                'https://bit.ly/creds': { finalUrl: 'https://user:pw@example.org/' },
+            },
+        }));
+        const out = await resolveViaBackend(['https://bit.ly/titled', 'https://bit.ly/untitled', 'https://bit.ly/creds'], { apiUrl: API_URL, fetchFn });
+        expect(out.answered.get('https://bit.ly/titled')).toEqual({ title: 'Odd', description: undefined, platform: 'Generic', finalUrl: undefined });
+        expect(out.answered.has('https://bit.ly/untitled')).toBe(false);
+        expect(out.answered.has('https://bit.ly/creds')).toBe(false);
+        expect(out.failed.size).toBe(0);
     });
 
     it.each<[string, () => Promise<Response>]>([
@@ -73,6 +99,6 @@ describe('resolveViaBackend', () => {
         const out = await resolveViaBackend(urls, { apiUrl: API_URL, fetchFn });
         expect(fetchFn).toHaveBeenCalledTimes(2);
         expect(out.failed.size).toBe(25);
-        expect(out.resolved.size).toBe(5);
+        expect(out.answered.size).toBe(5);
     });
 });

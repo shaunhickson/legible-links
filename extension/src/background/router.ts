@@ -8,13 +8,17 @@
  *   2. key = stripForTransmission(url); cache    -> resolved (cache) | none
  *   3. Tier 0 match                              -> resolved (local), cached
  *   4. Tier A match: auto mode or hover trigger  -> fetch platform; else hover
- *   5. Tier B: high entropy -> none; mode/trigger/page host decide backend | hover | none
+ *   5. Tier B: high entropy -> none; mode/trigger/page host decide backend | hover | none.
+ *      A backend answer that names the destination of a shortened link but has no
+ *      title (a platform page, say) is finished here: Tier 0, then Tier A under the
+ *      same rules, cached under the original key so the page shows "host via shortener".
  */
 import { Outcome, ResolvedOutcome, Trigger } from '../shared/protocol';
-import { resolveViaBackend } from '../resolvers/backend';
+import { hasTitle, resolveViaBackend } from '../resolvers/backend';
 import { RESOLVERS } from '../resolvers/index';
 import { OEmbedHttpError } from '../resolvers/oembed';
 import { FetchFn, LocalResolver, PlatformResolver, Resolver, ResolveResult, timeoutSignal } from '../resolvers/types';
+import { validFinalUrl } from '../shared/wire';
 import { CachedResolution, ResolutionCache } from '../utils/cache';
 import { sanitizeDescription, sanitizeTitle } from '../utils/sanitize';
 import { classifyUrl, hasHighEntropySegment, isSensitivePageHost, stripForTransmission } from '../utils/sensitive';
@@ -24,7 +28,6 @@ export const PLATFORM_TIMEOUT_MS = 4000;
 export const MAX_IN_FLIGHT_PER_HOST = 4;
 export const MAX_IN_FLIGHT = 8;
 export const BACKOFF_MS = 10 * 60 * 1000;
-const MAX_FINAL_URL_LENGTH = 2048;
 
 export interface RouterOptions {
     fetchFn: FetchFn;
@@ -89,18 +92,6 @@ export function createLimiter(perHost: number, total: number): Limiter {
             }
         },
     };
-}
-
-function validFinalUrl(value: string | undefined): string | undefined {
-    if (!value || value.length > MAX_FINAL_URL_LENGTH) return undefined;
-    let u: URL;
-    try {
-        u = new URL(value);
-    } catch {
-        return undefined;
-    }
-    if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password) return undefined;
-    return u.href;
 }
 
 /** Sanitizes a resolver's answer; null when nothing displayable is left. */
@@ -170,14 +161,8 @@ export function createRouter(options: RouterOptions): Router {
             return { kind: 'done', outcome: NONE };
         }
 
-        for (const resolver of localResolvers) {
-            if (!resolver.canHandle(target)) continue;
-            const r = resolver.resolve(target);
-            const value = r && toCached(r, 'local');
-            if (!value) continue;
-            cache.set(key, value);
-            return { kind: 'done', outcome: resolved(value, 'local') };
-        }
+        const local = runLocal(target, key);
+        if (local) return { kind: 'done', outcome: local };
 
         for (const resolver of platformResolvers) {
             if (!resolver.canHandle(target)) continue;
@@ -193,16 +178,35 @@ export function createRouter(options: RouterOptions): Router {
         return { kind: 'done', outcome: HOVER };
     }
 
-    async function runPlatform(resolver: PlatformResolver, target: URL, key: string): Promise<Outcome> {
+    /**
+     * Tier 0 against `target`, cached under `key`; null when no local resolver matches.
+     * `via` is where a shortened link landed, when the backend led us to `target`.
+     */
+    function runLocal(target: URL, key: string, via?: string): Outcome | null {
+        const source: CachedResolution['source'] = via ? 'backend' : 'local';
+        for (const resolver of localResolvers) {
+            if (!resolver.canHandle(target)) continue;
+            const r = resolver.resolve(target);
+            const value = r && toCached(via ? { ...r, finalUrl: via } : r, source);
+            if (!value) continue;
+            cache.set(key, value);
+            return resolved(value, source);
+        }
+        return null;
+    }
+
+    /** Tier A against `target`, cached under `key`; `via` as for runLocal. */
+    async function runPlatform(resolver: PlatformResolver, target: URL, key: string, via?: string): Promise<Outcome> {
+        const source: CachedResolution['source'] = via ? 'backend' : 'platform';
         try {
             const r = await resolver.resolve(target, { fetchFn: guardedFetch, signal: timeoutSignal(PLATFORM_TIMEOUT_MS) });
-            const value = r && toCached(r, 'platform');
+            const value = r && toCached(via ? { ...r, finalUrl: via } : r, source);
             if (!value) {
                 cache.setNegative(key);
                 return NONE;
             }
             cache.set(key, value);
-            return resolved(value, 'platform');
+            return resolved(value, source);
         } catch (err) {
             // A definitive 4xx (private, deleted, unknown) is remembered; transient failures are not.
             if (err instanceof OEmbedHttpError && err.status !== 429 && err.status < 500) cache.setNegative(key);
@@ -210,20 +214,50 @@ export function createRouter(options: RouterOptions): Router {
         }
     }
 
-    async function runBackend(keys: string[], settings: Settings): Promise<Map<string, Outcome>> {
+    /**
+     * The backend followed a shortened link but could not title where it landed.
+     * Finish locally under the normal rules: Tier 0 always; Tier A when the mode
+     * or the trigger allows, otherwise `hover`. A destination nothing here can
+     * title is `none` without a negative entry (the backend keeps its own, short one).
+     */
+    async function resolveDestination(key: string, finalUrl: string, settings: Settings, trigger: Trigger): Promise<Outcome> {
+        if (classifyUrl(finalUrl) !== 'ok') return NONE;
+        let target: URL;
+        try {
+            target = new URL(stripForTransmission(finalUrl));
+        } catch {
+            return NONE;
+        }
+        const local = runLocal(target, key, finalUrl);
+        if (local) return local;
+        for (const resolver of platformResolvers) {
+            if (!resolver.canHandle(target)) continue;
+            if (settings.platformMode === 'auto' || trigger === 'hover') return runPlatform(resolver, target, key, finalUrl);
+            return HOVER;
+        }
+        return NONE;
+    }
+
+    async function runBackend(keys: string[], settings: Settings, trigger: Trigger): Promise<Map<string, Outcome>> {
         const outcomes = new Map<string, Outcome>();
-        const { resolved: answered, failed } = await resolveViaBackend(keys, { apiUrl: settings.apiUrl, fetchFn: guardedFetch });
+        const { answered, failed } = await resolveViaBackend(keys, { apiUrl: settings.apiUrl, fetchFn: guardedFetch });
+        const followUps: Promise<void>[] = [];
         for (const key of keys) {
-            const r = answered.get(key);
-            const value = r && toCached(r, 'backend');
+            const answer = answered.get(key);
+            const value = answer && hasTitle(answer) ? toCached(answer, 'backend') : null;
             if (value) {
                 cache.set(key, value);
                 outcomes.set(key, resolved(value, 'backend'));
+            } else if (answer?.finalUrl) {
+                followUps.push(resolveDestination(key, answer.finalUrl, settings, trigger).then((outcome) => {
+                    outcomes.set(key, outcome);
+                }));
             } else {
                 if (!failed.has(key)) cache.setNegative(key);
                 outcomes.set(key, NONE);
             }
         }
+        await Promise.all(followUps);
         return outcomes;
     }
 
@@ -250,7 +284,7 @@ export function createRouter(options: RouterOptions): Router {
             }
 
             const backendJob = backendUrls.size > 0
-                ? runBackend(Array.from(backendUrls.keys()), settings)
+                ? runBackend(Array.from(backendUrls.keys()), settings, trigger)
                 : Promise.resolve(new Map<string, Outcome>());
 
             const [platformOutcomes, backendOutcomes] = await Promise.all([

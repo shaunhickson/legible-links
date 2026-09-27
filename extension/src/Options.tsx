@@ -2,16 +2,8 @@ import React, { useEffect, useState } from 'react';
 import './Popup.css'; // Reuse basic styles
 import {
     getSettings, saveSettings, isValidApiUrl, modeName, Settings, DEFAULT_SETTINGS, FilterMode, Theme,
-    GenericMode, ModeName, ModePreset, MODE_LABELS, MODE_PRESETS, PlatformMode,
+    GenericMode, ModePreset, MODE_DESCRIPTIONS, MODE_LABELS, MODE_PRESETS, PlatformMode, PRESET_ORDER,
 } from './utils/settings';
-
-/** One sentence per preset: exactly what leaves the browser, and to whom. */
-const MODE_DESCRIPTIONS: Record<Exclude<ModeName, 'custom'>, string> = {
-    private: 'Nothing leaves your browser until you hover a link; hovering a YouTube, Spotify, X, Reddit or Vimeo link asks that platform directly, and the Legible Links server is never contacted.',
-    balanced: 'YouTube, Spotify, X, Reddit and Vimeo links are looked up automatically by asking that platform directly; any other link is sent to the Legible Links server only while you hover it.',
-    everything: 'Platform links are looked up by the platform, and every other public link is sent to the Legible Links server automatically, except on webmail, chat and document sites, where it waits for a hover.',
-};
-const PRESET_ORDER: Exclude<ModeName, 'custom'>[] = ['private', 'balanced', 'everything'];
 
 const API_URL_ERROR = 'Enter an https:// URL (http:// is only allowed for localhost). The last valid URL stays in use.';
 

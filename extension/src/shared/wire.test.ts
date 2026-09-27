@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { parseResolveResponse } from './wire';
+import { parseResolveResponse, validFinalUrl } from './wire';
 
 // The same fixture is decoded by the backend's wire_test.go, so the two sides
 // of the /resolve contract cannot drift apart silently.
@@ -39,5 +39,22 @@ describe('/resolve wire contract', () => {
         expect(parsed?.titles.has('a')).toBe(false);
         expect(parsed?.details.has('b')).toBe(false);
         expect(parsed?.details.get('c')?.finalUrl).toBeUndefined();
+    });
+});
+
+describe('validFinalUrl', () => {
+    it.each<[string | undefined, string | undefined]>([
+        ['https://example.org/landing', 'https://example.org/landing'],
+        ['http://example.org/a?b=1', 'http://example.org/a?b=1'],
+        ['HTTPS://Example.org/x', 'https://example.org/x'],
+        [undefined, undefined],
+        ['', undefined],
+        ['javascript:alert(1)', undefined],
+        ['ftp://example.org/', undefined],
+        ['https://user:pw@example.org/', undefined],
+        ['not a url', undefined],
+        ['https://example.org/' + 'x'.repeat(2048), undefined],
+    ])('%s -> %s', (input, expected) => {
+        expect(validFinalUrl(input)).toBe(expected);
     });
 });

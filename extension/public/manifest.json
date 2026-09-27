@@ -1,9 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Legible Links",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Turns raw URLs in link text into readable titles, and always shows where the link goes.",
   "homepage_url": "https://github.com/shaunhickson/legible-links",
+  "minimum_chrome_version": "116",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "extension@legiblelinks.app",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["websiteContent"]
+      }
+    }
+  },
   "permissions": [
     "storage"
   ],

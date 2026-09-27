@@ -9,6 +9,7 @@ import spotifyFixture from './__fixtures__/spotify.json';
 import vimeoFixture from './__fixtures__/vimeo.json';
 import xFixture from './__fixtures__/x.json';
 import youtubeFixture from './__fixtures__/youtube.json';
+import youtubePlaylistFixture from './__fixtures__/youtube-playlist.json';
 import { fetchOEmbed, OEmbedHttpError } from './oembed';
 import { PLATFORM_RESOLVERS } from './index';
 import { reddit } from './reddit';
@@ -89,9 +90,21 @@ describe('youtube', () => {
         ['https://www.youtube.com/embed/dQw4w9WgXcQ', true],
         ['https://www.youtube.com/v/dQw4w9WgXcQ', true],
         ['https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', true],
+        ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', true],
+        ['https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', true],
+        ['https://youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', true],
+        ['https://m.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', true],
+        ['https://music.youtube.com/playlist?list=OLAK5uy_kmBcAgBQgEDrGCUjLYb8dGXrqzsKWb6Ac', true],
+        ['https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab&si=Ab12Cd', true],
         ['https://www.youtube.com/watch?v=short', false],
         ['https://www.youtube.com/watch?v=SPA', false],
         ['https://www.youtube.com/playlist?list=PLxyz', false],
+        ['https://www.youtube.com/playlist?list=WL', false],
+        ['https://www.youtube.com/playlist', false],
+        ['https://www.youtube.com/playlist/extra?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', false],
+        ['https://www.youtube.com/watch?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', false],
+        ['https://youtu.be/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', false],
+        ['https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab%20', false],
         ['https://www.youtube.com/@RickAstleyYT', false],
         ['https://www.youtube.com/', false],
         ['https://youtu.be/', false],
@@ -105,6 +118,28 @@ describe('youtube', () => {
             const { endpoint: called } = await resolveWith(youtube, url, youtubeFixture);
             expect(called, url).toBe(endpoint);
         }
+    });
+
+    it('canonicalises playlist forms to the www.youtube.com/playlist oEmbed endpoint', async () => {
+        const endpoint = 'https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fplaylist%3Flist%3DPLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab&format=json';
+        for (const url of [
+            'https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab',
+            'https://music.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab&si=x',
+            'https://m.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab',
+        ]) {
+            const { endpoint: called } = await resolveWith(youtube, url, youtubePlaylistFixture);
+            expect(called, url).toBe(endpoint);
+        }
+    });
+
+    it('a watch URL with a list parameter is the video, not the playlist', async () => {
+        const { endpoint } = await resolveWith(youtube, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', youtubeFixture);
+        expect(endpoint).toBe('https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ&format=json');
+    });
+
+    it('returns the playlist title and the channel as description', async () => {
+        const { result } = await resolveWith(youtube, 'https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab', youtubePlaylistFixture);
+        expect(result).toEqual({ title: 'Essence of linear algebra', description: '3Blue1Brown', platform: 'youtube' });
     });
 
     it('returns the title, the channel as description, and platform youtube', async () => {

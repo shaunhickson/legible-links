@@ -19,6 +19,7 @@ import spotifyFixture from './resolvers/__fixtures__/spotify.json';
 import vimeoFixture from './resolvers/__fixtures__/vimeo.json';
 import xFixture from './resolvers/__fixtures__/x.json';
 import youtubeFixture from './resolvers/__fixtures__/youtube.json';
+import youtubePlaylistFixture from './resolvers/__fixtures__/youtube-playlist.json';
 import { FetchFn } from './resolvers/types';
 import { createCache } from './utils/cache';
 import { DEFAULT_SETTINGS, ModeName, MODE_PRESETS, Settings } from './utils/settings';
@@ -36,7 +37,7 @@ interface Row {
     mode?: Exclude<ModeName, 'custom'>; // default balanced, the default install
     settings?: Partial<Settings>;
     hover?: boolean;               // the pointer rests on the link after the page has settled
-    server?: { title?: string; finalUrl?: string; reply?: 'ok' | 'error' | 'malformed' };
+    server?: { title?: string; finalUrl?: string; reply?: 'ok' | 'untitled' | 'error' | 'malformed' }; // untitled: only finalUrl, no title
     platform?: { title?: string; reply?: 'ok' | 'notfound' | 'down' };
     contacts: Contacts;            // exactly which hosts are contacted, and how many times
     wire?: string;                 // the exact URL in the POST body to our server, when it must differ from href
@@ -50,6 +51,9 @@ interface Row {
 const YT = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 const YT_OEMBED = 'https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ&format=json';
 const RICK = 'Rick Astley - Never Gonna Give You Up';
+const PLAYLIST = 'https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab';
+const PLAYLIST_OEMBED = 'https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fplaylist%3Flist%3DPLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab&format=json';
+const WIKI = 'https://en.wikipedia.org/wiki/Alan_Turing';
 const ARTICLE = 'https://example.org/blog/2026/post';
 
 const rows: Row[] = [
@@ -74,11 +78,16 @@ const rows: Row[] = [
     { name: 'YouTube link on a webmail page still asks YouTube (the page host only gates our server)', href: YT, page: 'mail.google.com', mode: 'everything', contacts: { 'www.youtube.com': 1 }, expect: 'rendered', renderedText: RICK },
     { name: 'Private mode: YouTube link is left raw', href: YT, mode: 'private', contacts: {}, expect: 'untouched' },
     { name: 'Private mode: hovering the YouTube link asks YouTube once', href: YT, mode: 'private', hover: true, contacts: { 'www.youtube.com': 1 }, expect: 'rendered', renderedText: RICK },
+    { name: 'YouTube playlist asks YouTube once, at its oEmbed endpoint; our server is not involved', href: PLAYLIST, contacts: { 'www.youtube.com': 1 }, endpoint: PLAYLIST_OEMBED, expect: 'rendered', renderedText: 'Essence of linear algebra' },
+    { name: 'Private mode: YouTube playlist is left raw', href: PLAYLIST, mode: 'private', contacts: {}, expect: 'untouched' },
 
     // ---- Tier B: everything else goes to our server, and only when the mode and trigger allow it.
     { name: 'Balanced (default): a plain article link is left raw', href: ARTICLE, contacts: {}, expect: 'untouched' },
     { name: 'Balanced: hovering the article link asks our server once', href: ARTICLE, hover: true, contacts: { server: 1 }, expect: 'rendered' },
     { name: 'Balanced: hovering a shortened link shows where it lands', href: 'https://bit.ly/3abc', hover: true, server: { title: 'Landing page', finalUrl: 'https://example.org/landing' }, contacts: { server: 1 }, expect: 'rendered', renderedText: 'Landing page', domainText: '· example.org via bit.ly', titleAttr: 'https://example.org/landing (via https://bit.ly/3abc)' },
+    { name: 'Balanced: a shortened link landing on YouTube asks our server once, then YouTube once, and shows the destination via the shortener', href: 'https://bit.ly/3yt', hover: true, server: { reply: 'untitled', finalUrl: YT }, contacts: { server: 1, 'www.youtube.com': 1 }, expect: 'rendered', renderedText: RICK, domainText: '· www.youtube.com via bit.ly', titleAttr: `${YT} (via https://bit.ly/3yt)` },
+    { name: 'Balanced: a shortened link landing on Wikipedia asks our server once and nothing else; the title comes from the destination URL', href: 'https://bit.ly/3wiki', hover: true, server: { reply: 'untitled', finalUrl: WIKI }, contacts: { server: 1 }, expect: 'rendered', renderedText: 'Alan Turing', domainText: '· en.wikipedia.org via bit.ly', titleAttr: `${WIKI} (via https://bit.ly/3wiki)` },
+    { name: 'Balanced: a shortened link landing somewhere nobody can title stays raw', href: 'https://bit.ly/3none', hover: true, server: { reply: 'untitled', finalUrl: 'https://example.org/landing' }, contacts: { server: 1 }, expect: 'untouched' },
     { name: 'Everything: the article link is sent automatically', href: ARTICLE, mode: 'everything', contacts: { server: 1 }, expect: 'rendered' },
     { name: 'Everything on Gmail: nothing is sent automatically', href: ARTICLE, mode: 'everything', page: 'mail.google.com', contacts: {}, expect: 'untouched' },
     { name: 'Everything on Gmail: hovering sends it', href: ARTICLE, mode: 'everything', page: 'mail.google.com', hover: true, contacts: { server: 1 }, expect: 'rendered' },
@@ -172,14 +181,19 @@ function answer(row: Row, url: string, init?: RequestInit): Response {
         if (row.server?.reply === 'malformed') return jsonResponse(200, { titles: 'not-an-object' });
         const urls = (JSON.parse(String(init?.body)) as { urls: string[] }).urls;
         const titles: Record<string, string> = {};
-        const details: Record<string, { platform: string; finalUrl?: string }> = {};
+        const details: Record<string, { platform?: string; finalUrl?: string }> = {};
         for (const u of urls) {
+            if (row.server?.reply === 'untitled') {
+                details[u] = { finalUrl: row.server.finalUrl }; // the backend followed the redirect but could not title the page
+                continue;
+            }
             titles[u] = row.server?.title ?? 'Resolved title';
             details[u] = { platform: 'Generic', finalUrl: row.server?.finalUrl };
         }
         return jsonResponse(200, { titles, details });
     }
-    const fixture = platformFixtures[host];
+    const asked = new URL(url).searchParams.get('url') ?? '';
+    const fixture = host === 'www.youtube.com' && asked.includes('/playlist?') ? youtubePlaylistFixture : platformFixtures[host];
     if (fixture === undefined) throw new Error(`unexpected host contacted: ${host}`);
     if (row.platform?.reply === 'notfound') return jsonResponse(404, {});
     if (row.platform?.reply === 'down') throw new TypeError('Failed to fetch');

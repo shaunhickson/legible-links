@@ -1,6 +1,9 @@
 import React from 'react';
 import { Eye, Shield } from 'lucide-react';
 import Link from 'next/link';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = { title: 'Privacy Policy', description: 'What leaves your browser, where it goes, and what our server keeps: nothing.' };
 
 const ISSUES = 'https://github.com/shaunhickson/legible-links/issues';
 const CONTRACT = 'https://github.com/shaunhickson/legible-links/blob/main/extension/src/privacy-contract.test.ts';

@@ -5,8 +5,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Legible Links | Transparency for the Web",
-  description: "Stop clicking and hoping. Legible Links reveals what's behind opaque URLs instantly.",
+  title: { default: "Legible Links", template: "%s | Legible Links" },
+  description: "A browser extension that turns raw URLs in link text into readable titles and always shows where the link goes.",
 };
 
 export default function RootLayout({
