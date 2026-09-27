@@ -45,6 +45,19 @@ describe('UIManager tooltip', () => {
         expect(line?.children.length).toBe(0);
     });
 
+    it('shows both URLs and the final host for an unshortened link', () => {
+        ui.show(anchor, { title: 'Landing', domain: 'bit.ly', url: 'https://bit.ly/3abc', platform: 'generic', finalUrl: 'https://example.org/landing' });
+        expect(shadow.querySelector('.header')?.textContent).toBe('example.org via bit.ly');
+        const lines = Array.from(shadow.querySelectorAll('.url')).map((el) => el.textContent);
+        expect(lines).toEqual(['https://example.org/landing', 'via https://bit.ly/3abc']);
+    });
+
+    it('ignores a finalUrl on the same host', () => {
+        ui.show(anchor, { title: 'T', domain: 'example.org', url: 'https://example.org/a', platform: 'generic', finalUrl: 'https://example.org/b' });
+        expect(shadow.querySelector('.header')?.textContent).toBe('example.org');
+        expect(shadow.querySelectorAll('.url')).toHaveLength(1);
+    });
+
     it('omits the description block when there is none', () => {
         ui.show(anchor, { title: 'T', domain: 'example.com', url: 'https://example.com/', platform: 'generic' });
         expect(shadow.querySelector('.description')).toBeNull();

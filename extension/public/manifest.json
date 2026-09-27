@@ -1,13 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Legible Links",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Turns raw URLs in link text into readable titles, and always shows where the link goes.",
   "homepage_url": "https://github.com/shaunhickson/legible-links",
   "permissions": [
     "storage"
   ],
   "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://publish.x.com/*",
+    "https://open.spotify.com/*",
+    "https://www.reddit.com/*",
+    "https://vimeo.com/*",
     "https://youtube-replacer-backend-542312799814.us-east1.run.app/*"
   ],
   "action": {
@@ -24,12 +29,19 @@
   },
   "background": {
     "service_worker": "assets/background.js",
-    "type": "module"
+    "scripts": [
+      "assets/background.js"
+    ]
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["assets/content.js"]
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "assets/content.js"
+      ]
     }
   ],
   "icons": {

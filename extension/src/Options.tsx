@@ -1,6 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import './Popup.css'; // Reuse basic styles
-import { getSettings, saveSettings, isValidApiUrl, Settings, DEFAULT_SETTINGS, FilterMode, Theme } from './utils/settings';
+import {
+    getSettings, saveSettings, isValidApiUrl, modeName, Settings, DEFAULT_SETTINGS, FilterMode, Theme,
+    GenericMode, ModeName, ModePreset, MODE_LABELS, MODE_PRESETS, PlatformMode,
+} from './utils/settings';
+
+/** One sentence per preset: exactly what leaves the browser, and to whom. */
+const MODE_DESCRIPTIONS: Record<Exclude<ModeName, 'custom'>, string> = {
+    private: 'Nothing leaves your browser until you hover a link; hovering a YouTube, Spotify, X, Reddit or Vimeo link asks that platform directly, and the Legible Links server is never contacted.',
+    balanced: 'YouTube, Spotify, X, Reddit and Vimeo links are looked up automatically by asking that platform directly; any other link is sent to the Legible Links server only while you hover it.',
+    everything: 'Platform links are looked up by the platform, and every other public link is sent to the Legible Links server automatically, except on webmail, chat and document sites, where it waits for a hover.',
+};
+const PRESET_ORDER: Exclude<ModeName, 'custom'>[] = ['private', 'balanced', 'everything'];
 
 const API_URL_ERROR = 'Enter an https:// URL (http:// is only allowed for localhost). The last valid URL stays in use.';
 
@@ -10,6 +21,7 @@ const Options: React.FC = () => {
     const [apiUrlError, setApiUrlError] = useState<string | null>(null);
     const [newDomain, setNewDomain] = useState('');
     const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+    const [customOpen, setCustomOpen] = useState(false);
 
     useEffect(() => {
         getSettings().then((loaded) => {
@@ -63,6 +75,14 @@ const Options: React.FC = () => {
         setTimeout(() => setTestStatus('idle'), 3000);
     };
 
+    const currentMode = modeName(settings);
+    const showCustom = customOpen || currentMode === 'custom';
+
+    const choosePreset = (preset: ModePreset) => {
+        setCustomOpen(false);
+        handleSave(preset);
+    };
+
     const resetApiUrl = () => {
         setApiUrlInput(DEFAULT_SETTINGS.apiUrl);
         setApiUrlError(null);
@@ -76,6 +96,71 @@ const Options: React.FC = () => {
             </div>
 
             <div className="content">
+                {/* Privacy mode */}
+                <div className="card" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                    <div className="label-text">Privacy mode</div>
+                    <div className="status" style={{ fontSize: '12px', marginBottom: '8px' }}>
+                        Wikipedia, GitHub, Reddit, Stack Overflow and Amazon links are always read from the URL itself, with no network at all.
+                    </div>
+                    <div role="radiogroup" aria-label="Privacy mode">
+                        {PRESET_ORDER.map((name) => (
+                            <label key={name} className="mode-card" style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '10px', border: '1px solid #e0e0e0', borderRadius: '6px', marginBottom: '8px', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="privacy-mode"
+                                    value={name}
+                                    checked={!showCustom && currentMode === name}
+                                    onChange={() => choosePreset(MODE_PRESETS[name])}
+                                    style={{ marginTop: '3px' }}
+                                />
+                                <span>
+                                    <span style={{ fontWeight: 500 }}>{MODE_LABELS[name]}{name === 'balanced' ? ' (default)' : ''}</span>
+                                    <span className="status" style={{ display: 'block', fontSize: '12px' }}>{MODE_DESCRIPTIONS[name]}</span>
+                                </span>
+                            </label>
+                        ))}
+                        <label className="mode-card" style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '10px', border: '1px solid #e0e0e0', borderRadius: '6px', cursor: 'pointer' }}>
+                            <input
+                                type="radio"
+                                name="privacy-mode"
+                                value="custom"
+                                checked={showCustom}
+                                onChange={() => setCustomOpen(true)}
+                                style={{ marginTop: '3px' }}
+                            />
+                            <span>
+                                <span style={{ fontWeight: 500 }}>Custom</span>
+                                <span className="status" style={{ display: 'block', fontSize: '12px' }}>Choose separately for platform links and for everything else.</span>
+                            </span>
+                        </label>
+                    </div>
+                    {showCustom && (
+                        <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '1fr auto', rowGap: '8px', columnGap: '12px', alignItems: 'center' }}>
+                            <label htmlFor="platform-mode">YouTube, Spotify, X, Reddit, Vimeo (asked directly)</label>
+                            <select
+                                id="platform-mode"
+                                value={settings.platformMode}
+                                onChange={(e) => handleSave({ platformMode: e.target.value as PlatformMode })}
+                                style={{ padding: '4px' }}
+                            >
+                                <option value="auto">Automatically</option>
+                                <option value="hover">Only on hover</option>
+                            </select>
+                            <label htmlFor="generic-mode">Every other link (via the Legible Links server)</label>
+                            <select
+                                id="generic-mode"
+                                value={settings.genericMode}
+                                onChange={(e) => handleSave({ genericMode: e.target.value as GenericMode })}
+                                style={{ padding: '4px' }}
+                            >
+                                <option value="off">Never</option>
+                                <option value="hover">Only on hover</option>
+                                <option value="auto">Automatically</option>
+                            </select>
+                        </div>
+                    )}
+                </div>
+
                 {/* Connection Section */}
                 <div className="card" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
                     <div className="label-text">Backend Connection (Self-Hosting)</div>
